@@ -43,15 +43,13 @@ const adapter = new CloudAdapter(botFrameworkAuthentication);
 adapter.onTurnError = async (context, error) => {
     const errorMsg = error.message || 'Ocurrió un error inesperado.';
     console.error(`\n [onTurnError] Error no manejado: ${error}`);
+    console.error(`Stack: ${error.stack}`);
 
     // Limpiar estado
     await conversationState.delete(context);
     
     // Enviar mensaje al usuario
     await context.sendActivity(`Lo siento, ocurrió un error. ${errorMsg}`);
-    
-    // Para depuración local
-    console.error(`Stack: ${error.stack}`);
 };
 
 // Definir almacenamiento de estado para el bot
@@ -102,27 +100,38 @@ server.post('/api/messages', async (req, res) => {
         const body = req.body;
         if (body) {
             console.log(`Actividad recibida - Tipo: ${body.type}, Nombre: ${body.name || 'N/A'}`);
+            
+            // Imprimir más información para depuración
+            if (body.type === 'message') {
+                console.log(`Mensaje: "${body.text}"`);
+            } else if (body.type === 'invoke') {
+                console.log(`Actividad de invoke: "${body.name}"`);
+            }
         }
     } catch (e) {
         console.log('Error al registrar actividad:', e.message);
     }
     
-    // Procesar la solicitud con el adaptador
-    await adapter.process(req, res, (context) => bot.run(context));
+    try {
+        // Procesar la solicitud con el adaptador
+        await adapter.process(req, res, (context) => bot.run(context));
+    } catch (error) {
+        console.error('Error al procesar mensaje:', error.message);
+        console.error(error.stack);
+        res.status(500).send('Error interno del servidor');
+    }
 });
 
 // Rutas adicionales
-server.get(
-   '/public/*',
-   (req, res, next) =>
-     restify.plugins.serveStatic({
-       directory: path.join(path.resolve(), 'public'),
-       appendRequestPath: false
-     })(req, res, next)
- );
+server.get('/public/*', restify.plugins.serveStatic({
+    directory: path.join(path.resolve(), 'public'),
+    appendRequestPath: false
+}));
 
 // Ruta para manejar solicitudes OAuth
 server.get('/oauthcallback', (req, res, next) => {
+    console.log('Recibida solicitud a /oauthcallback');
+    
     const htmlContent = `
     <html>
         <body>

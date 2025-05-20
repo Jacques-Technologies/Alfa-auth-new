@@ -66,6 +66,20 @@ class TeamsBot extends DialogBot {
             if (messageText.toLowerCase() === 'login' || !isAuthenticated) {
                 console.log('Usuario no autenticado o solicitó login, iniciando flujo de autenticación...');
                 
+                // Enviar card de login explícitamente antes de iniciar el diálogo
+                if (!context.activity.value) { // Evitar enviar el card si es una respuesta a un card
+                    const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
+                    const loginCard = CardFactory.oauthCard(
+                        connectionName,
+                        'Iniciar sesión',
+                        'Por favor inicia sesión con tu cuenta corporativa'
+                    );
+                    
+                    await context.sendActivity({ 
+                        attachments: [loginCard] 
+                    });
+                }
+                
                 // Pasar al flujo de diálogo para autenticación
                 await this.dialog.run(context, this.dialogState);
             } else {
