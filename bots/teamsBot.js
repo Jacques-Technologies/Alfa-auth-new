@@ -1,5 +1,5 @@
 const { DialogBot } = require('./dialogBot');
-const { CardFactory } = require('botbuilder');
+const { CardFactory, ActivityTypes, TeamsInfo } = require('botbuilder');
 const openaiService = require('../services/openaiService');
 const conversationService = require('../services/conversationService');
 
@@ -25,21 +25,6 @@ class TeamsBot extends DialogBot {
         
         // Almacenar estado de autenticación de los usuarios
         this.authenticatedUsers = new Map();
-
-        // Registrar manejadores para eventos de Teams de inicio de sesión
-        // Corregido: en lugar de usar métodos que no existen, usamos el método onDialog
-        this.onDialog(async (context, next) => {
-            // Verificar si es una actividad de tipo 'invoke' con nombre 'signin/verifyState'
-            if (context.activity.type === 'invoke' && context.activity.name === 'signin/verifyState') {
-                await this.handleTeamsSigninVerifyState(context, context.activity.value);
-            }
-            // Verificar si es una actividad de tipo 'invoke' con nombre 'signin/tokenExchange'
-            else if (context.activity.type === 'invoke' && context.activity.name === 'signin/tokenExchange') {
-                await this.handleTeamsSigninTokenExchange(context, context.activity.value);
-            }
-            
-            await next();
-        });
     }
 
     /**
@@ -65,13 +50,13 @@ class TeamsBot extends DialogBot {
     async handleMessage(context, next) {
         const userId = context.activity.from.id;
         const conversationId = context.activity.conversation.id;
-        const messageText = context.activity.text;
+        const messageText = context.activity.text || '';
         
         try {
             // Verificar si ya está autenticado o necesita autenticarse
             const isAuthenticated = this.authenticatedUsers.get(userId);
             
-            // Si el usuario escribe "login" explícitamente, iniciar flujo de autenticación
+            // Si el usuario escribe "login" explícitamente o no está autenticado
             if (messageText.toLowerCase() === 'login' || !isAuthenticated) {
                 console.log('Usuario no autenticado, iniciando flujo de autenticación...');
                 
@@ -86,6 +71,7 @@ class TeamsBot extends DialogBot {
             await context.sendActivity('Lo siento, ocurrió un error al procesar tu mensaje. Por favor, intenta escribir "login" para iniciar sesión nuevamente.');
         }
         
+        // Asegurarse de que se llame a next() para continuar con la cadena de middleware
         await next();
     }
 
@@ -177,23 +163,23 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * Recibe actividades de verificación de estado para signin
-     * @param {TurnContext} context - Contexto de la conversación
-     * @param {Object} state - Estado de verificación
+     * Sobreescribe el método onInvokeActivity para manejar actividades de Teams
+     * @param {TurnContext} context - Contexto del turno
      */
-    async handleTeamsSigninVerifyState(context, state) {
-        console.log('Running dialog with signin/verifyState from an Invoke Activity.');
-        await this.dialog.run(context, this.dialogState);
-    }
-
-    /**
-     * Recibe actividades de intercambio de token para signin
-     * @param {TurnContext} context - Contexto de la conversación
-     * @param {Object} state - Estado de intercambio
-     */
-    async handleTeamsSigninTokenExchange(context, state) {
-        console.log('Running dialog with signin/tokenExchange from an Invoke Activity.');
-        await this.dialog.run(context, this.dialogState);
+    async onInvokeActivity(context) {
+        console.log(`Actividad Invoke recibida: ${context.activity.name}`);
+        
+        // Manejar actividades de invocación de Teams para OAuth
+        if (context.activity.name === 'signin/verifyState') {
+            await this.dialog.run(context, this.dialogState);
+            return { status: 200 };
+        } else if (context.activity.name === 'signin/tokenExchange') {
+            await this.dialog.run(context, this.dialogState);
+            return { status: 200 };
+        }
+        
+        // Para otras actividades de invoke, usar el handler predeterminado
+        return await super.onInvokeActivity(context);
     }
 
     /**

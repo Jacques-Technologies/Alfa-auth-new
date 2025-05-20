@@ -12,15 +12,29 @@ const {
     MemoryStorage,
     UserState,
     ConfigurationBotFrameworkAuthentication,
-    CardFactory
+    CardFactory,
+    TeamsInfo
 } = require('botbuilder');
 
 // Importar componentes del bot
 const { TeamsBot } = require('./bots/teamsBot');
 const { MainDialog } = require('./dialogs/mainDialog');
 
+// Validar configuración de OAuth
+const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
+if (!connectionName) {
+    console.error('ERROR: Nombre de conexión OAuth no configurado. Por favor, configura la variable connectionName en el archivo .env');
+    process.exit(1);
+}
+
 // Configurar autenticación de Bot Framework
-const botFrameworkAuthentication = new ConfigurationBotFrameworkAuthentication(process.env);
+const botFrameworkAuthentication = new ConfigurationBotFrameworkAuthentication({
+    MicrosoftAppId: process.env.MicrosoftAppId || process.env.MICROSOFT_APP_ID,
+    MicrosoftAppPassword: process.env.MicrosoftAppPassword || process.env.MICROSOFT_APP_PASSWORD,
+    MicrosoftAppTenantId: process.env.MicrosoftAppTenantId || process.env.MICROSOFT_APP_TENANT_ID,
+    MicrosoftAppType: process.env.MicrosoftAppType || process.env.MICROSOFT_APP_TYPE || 'MultiTenant',
+    OAuthConnectionName: connectionName
+});
 
 // Crear adaptador
 const adapter = new CloudAdapter(botFrameworkAuthentication);
@@ -36,7 +50,7 @@ adapter.onTurnError = async (context, error) => {
     // Enviar mensaje al usuario
     await context.sendActivity(`Lo siento, ocurrió un error. ${errorMsg}`);
     
-    // Para depuración local (se puede descomentar)
+    // Para depuración local
     console.error(`Stack: ${error.stack}`);
 };
 
@@ -61,11 +75,11 @@ server.use(restify.plugins.bodyParser());
 const port = process.env.PORT || process.env.port || 3978;
 server.listen(port, () => {
     console.log(`\n${server.name} escuchando en ${server.url}`);
-    console.log('\nNavega a Bot Framework Emulator en http://localhost:4000');
     console.log('\nPara usar Bot Framework Emulator, ve a https://docs.microsoft.com/en-us/azure/bot-service/bot-service-debug-emulator');
+    console.log(`\nNombre de conexión OAuth configurado: ${connectionName}`);
 });
 
-// Configuración del preflight para CORS (si es necesario)
+// Configuración del preflight para CORS
 server.pre(restify.pre.sanitizePath());
 server.use(
     function crossOrigin(req, res, next) {
@@ -83,6 +97,16 @@ server.post('/api/messages', async (req, res) => {
     req.turnState = req.turnState || new Map();
     req.turnState.set('bot', bot);
     
+    // Proceso de depuración - log para verificar actividades
+    try {
+        const body = req.body;
+        if (body) {
+            console.log(`Actividad recibida - Tipo: ${body.type}, Nombre: ${body.name || 'N/A'}`);
+        }
+    } catch (e) {
+        console.log('Error al registrar actividad:', e.message);
+    }
+    
     // Procesar la solicitud con el adaptador
     await adapter.process(req, res, (context) => bot.run(context));
 });
@@ -90,8 +114,6 @@ server.post('/api/messages', async (req, res) => {
 // Rutas adicionales
 server.get(
    '/public/*',
-  // Restify ya proporciona handler async interno, así que pasamos tal cual,
-   //   pero añadimos "next" en caso de callback simple.
    (req, res, next) =>
      restify.plugins.serveStatic({
        directory: path.join(path.resolve(), 'public'),
@@ -130,5 +152,5 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 console.log(`Bot iniciado. Ejecutándose en el puerto ${port}`);
-console.log(`Nombre de conexión OAuth configurado: ${process.env.connectionName || 'NO CONFIGURADO'}`);
+console.log(`Nombre de conexión OAuth configurado: ${connectionName}`);
 console.log(`Para verificar la configuración de autenticación, revisa el archivo .env`);

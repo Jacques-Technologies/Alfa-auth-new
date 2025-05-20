@@ -15,11 +15,19 @@ class MainDialog extends LogoutDialog {
      * Constructor del diálogo principal
      */
     constructor() {
-        super(MAIN_DIALOG, process.env.connectionName);
+        // Obtener el nombre de conexión de las variables de entorno
+        const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
+        
+        // Validar que existe un nombre de conexión
+        if (!connectionName) {
+            console.warn('ADVERTENCIA: Nombre de conexión OAuth no configurado. Configurar la variable connectionName en el archivo .env');
+        }
+        
+        super(MAIN_DIALOG, connectionName);
 
         // Crear prompts y diálogos necesarios
         this.addDialog(new OAuthPrompt(OAUTH_PROMPT, {
-            connectionName: process.env.connectionName,
+            connectionName: connectionName,
             text: 'Por favor inicia sesión para acceder a los servicios de Alfa Bot',
             title: 'Iniciar sesión',
             timeout: 300000
@@ -69,14 +77,14 @@ class MainDialog extends LogoutDialog {
         // Enviar mensaje claro al usuario sobre la autenticación
         await stepContext.context.sendActivity('Para poder usar todas las funcionalidades de Alfa Bot, necesitas iniciar sesión.');
         
-        // Crear tarjeta adaptativa para mejorar UX
-        const signinCard = CardFactory.signinCard(
+        // Crear tarjeta OAuth compatible con Teams
+        const signInCard = CardFactory.oauthCard(
+            this.connectionName,
             'Acceder a Alfa Bot',
-            'Iniciar sesión',
-            `Haz clic en el botón para autenticarte`
+            'Iniciar sesión'
         );
         
-        await stepContext.context.sendActivity({ attachments: [signinCard] });
+        await stepContext.context.sendActivity({ attachments: [signInCard] });
         
         // Iniciar el diálogo OAuth
         return await stepContext.beginDialog(OAUTH_PROMPT);
@@ -101,6 +109,13 @@ class MainDialog extends LogoutDialog {
                 email: tokenResponse.email || tokenResponse.upn || 'usuario@alfa.com',
                 name: tokenResponse.name || 'Usuario Alfa'
             };
+            
+            // Mostrar información de depuración sobre el token
+            console.log(`Token obtenido para usuario ${userId}. Token info:`, JSON.stringify({
+                email: userData.email,
+                name: userData.name,
+                tokenLength: tokenResponse.token ? tokenResponse.token.length : 0
+            }));
             
             // Acceder al bot para marcarlo como autenticado
             const bot = context.turnState.get('bot');
