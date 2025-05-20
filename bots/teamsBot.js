@@ -1,5 +1,5 @@
 const { DialogBot } = require('./dialogBot');
-const { CardFactory, ActivityTypes, TeamsInfo } = require('botbuilder');
+const { CardFactory, ActivityTypes } = require('botbuilder');
 const openaiService = require('../services/openaiService');
 const conversationService = require('../services/conversationService');
 
@@ -16,11 +16,8 @@ class TeamsBot extends DialogBot {
     constructor(conversationState, userState, dialog) {
         super(conversationState, userState, dialog);
 
-        // Agregar manejo de miembros añadidos y mensajes
+        // Agregar manejo de miembros añadidos
         this.onMembersAdded(this.handleMembersAdded.bind(this));
-        
-        // Registrar el manejador de actividades invoke correctamente
-        this.onInvokeActivity(this.handleInvokeActivity.bind(this));
         
         // Mantener referencia a los servicios
         this.openaiService = openaiService;
@@ -105,36 +102,39 @@ class TeamsBot extends DialogBot {
         // Asegurarse de que se llame a next() para continuar con la cadena de middleware
         await next();
     }
-    
+
     /**
-     * Maneja actividades invoke (llamada de la API de Teams)
-     * @param {TurnContext} context - Contexto del turno
-     * @returns {Object} - Respuesta con código de estado
+     * Handle invoke activities - important for OAuth flow
+     * Override the onInvokeActivity method from TeamsActivityHandler
+     * @param {TurnContext} context - The turn context
+     * @returns {Promise<InvokeResponse>} - The invoke response
      */
-    async handleInvokeActivity(context) {
-        // Verificar que context.activity existe
-        if (!context || !context.activity) {
-            console.error('handleInvokeActivity: context o context.activity es undefined');
+    async onInvokeActivity(context) {
+        try {
+            // Safety check
+            if (!context || !context.activity) {
+                console.error('onInvokeActivity: context or context.activity is undefined');
+                return { status: 500 };
+            }
+            
+            // Get activity name safely
+            const activityName = context.activity?.name || 'unknown';
+            console.log(`Invoke activity received: ${activityName}`);
+            
+            // Handle authentication activities
+            if (activityName === 'signin/verifyState' || activityName === 'signin/tokenExchange') {
+                console.log(`Processing OAuth activity: ${activityName}`);
+                await this.dialog.run(context, this.dialogState);
+                return { status: 200 };
+            }
+            
+            // For other invoke activities, call the parent method
+            console.log(`Delegating unhandled invoke activity to parent: ${activityName}`);
+            return await super.onInvokeActivity(context);
+        } catch (error) {
+            console.error(`Error in onInvokeActivity: ${error.message}`);
             return { status: 500 };
         }
-        
-        // Acceder a name de forma segura
-        const activityName = context.activity.name || 'unknown';
-        console.log(`Actividad Invoke recibida: ${activityName}`);
-        
-        // Manejar actividades de invocación de Teams para OAuth
-        if (activityName === 'signin/verifyState') {
-            console.log('Procesando signin/verifyState');
-            await this.dialog.run(context, this.dialogState);
-            return { status: 200 };
-        } else if (activityName === 'signin/tokenExchange') {
-            console.log('Procesando signin/tokenExchange');
-            await this.dialog.run(context, this.dialogState);
-            return { status: 200 };
-        }
-        
-        console.log(`Delegando actividad invoke no manejada al padre: ${activityName}`);
-        return await super.onInvokeActivity(context);
     }
 
     /**

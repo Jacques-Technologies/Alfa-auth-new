@@ -111,23 +111,7 @@ class MainDialog extends LogoutDialog {
                 }
             }
             
-            await stepContext.context.sendActivity('¡Has iniciado sesión exitosamente! Ahora puedes hacer preguntas al bot.');
-            
-            // Mostrar una tarjeta de confirmación
-            const card = CardFactory.heroCard(
-                'Autenticación exitosa',
-                'Ahora puedes interactuar con el bot',
-                null,
-                [
-                    {
-                        type: 'openUrl',
-                        title: 'Documentación',
-                        value: 'https://tu-documentacion.com'
-                    }
-                ]
-            );
-            
-            await stepContext.context.sendActivity({ attachments: [card] });
+            await stepContext.context.sendActivity('¡Has iniciado sesión exitosamente! Ahora puedes hacer preguntas y el agente de OpenAI te responderá. ¿En qué puedo ayudarte hoy?');
             
             return await stepContext.next();
         }
