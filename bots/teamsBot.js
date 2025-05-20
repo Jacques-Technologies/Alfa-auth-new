@@ -25,6 +25,9 @@ class TeamsBot extends DialogBot {
         
         // Almacenar estado de autenticación de los usuarios
         this.authenticatedUsers = new Map();
+        
+        // Crear un estado persistente para la autenticación
+        this.authState = this.userState.createProperty('AuthState');
     }
 
     /**
@@ -53,17 +56,21 @@ class TeamsBot extends DialogBot {
         const messageText = context.activity.text || '';
         
         try {
-            // Verificar si ya está autenticado o necesita autenticarse
-            const isAuthenticated = this.authenticatedUsers.get(userId);
+            // Recuperar estado de autenticación desde userState
+            const authData = await this.authState.get(context, {});
+            const isAuthenticated = authData[userId]?.authenticated || false;
+            
+            console.log(`Estado de autenticación para usuario ${userId}: ${isAuthenticated ? 'Autenticado' : 'No autenticado'}`);
             
             // Si el usuario escribe "login" explícitamente o no está autenticado
             if (messageText.toLowerCase() === 'login' || !isAuthenticated) {
-                console.log('Usuario no autenticado, iniciando flujo de autenticación...');
+                console.log('Usuario no autenticado o solicitó login, iniciando flujo de autenticación...');
                 
                 // Pasar al flujo de diálogo para autenticación
                 await this.dialog.run(context, this.dialogState);
             } else {
                 // Usuario ya autenticado, procesar con OpenAI
+                console.log(`Procesando mensaje autenticado de ${userId}: "${messageText}"`);
                 await this.handleAuthenticatedMessage(context, messageText, userId, conversationId);
             }
         } catch (error) {
@@ -97,8 +104,14 @@ class TeamsBot extends DialogBot {
             // Obtener historial de la conversación
             const history = await this.conversationService.getConversationHistory(conversationId);
             
+            // Formato adecuado para el historial
+            const formattedHistory = history.map(item => ({
+                type: item.userId === userId ? 'user' : 'assistant',
+                message: item.message
+            }));
+            
             // Procesar con OpenAI
-            const respuesta = await this.openaiService.procesarMensaje(message, history);
+            const respuesta = await this.openaiService.procesarMensaje(message, formattedHistory);
             
             // Guardar la respuesta en CosmosDB
             await this.conversationService.saveMessage(
@@ -126,13 +139,31 @@ class TeamsBot extends DialogBot {
      */
     async setUserAuthenticated(userId, conversationId, userData) {
         try {
-            // Marcar como autenticado
+            // Marcar como autenticado en memoria
             this.authenticatedUsers.set(userId, userData);
             
-            // Crear registro de conversación en CosmosDB
-            await this.conversationService.createConversation(conversationId, userId);
+            // Actualizar en el estado persistente
+            const context = userData.context; // Asumimos que el contexto se pasa en userData
+            if (context) {
+                const authData = await this.authState.get(context, {});
+                authData[userId] = {
+                    authenticated: true,
+                    email: userData.email,
+                    name: userData.name,
+                    lastAuthenticated: new Date().toISOString()
+                };
+                await this.authState.set(context, authData);
+            }
             
-            console.log(`Usuario ${userId} autenticado correctamente.`);
+            // Crear registro de conversación en CosmosDB si no existe
+            try {
+                await this.conversationService.createConversation(conversationId, userId);
+            } catch (error) {
+                // Si ya existe, ignorar el error
+                console.log(`Nota: Posible conversación ya existente: ${error.message}`);
+            }
+            
+            console.log(`Usuario ${userId} autenticado correctamente y guardado en estado.`);
             return true;
         } catch (error) {
             console.error(`Error al establecer usuario como autenticado: ${error.message}`);

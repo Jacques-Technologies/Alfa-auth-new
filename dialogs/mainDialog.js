@@ -71,6 +71,7 @@ class MainDialog extends LogoutDialog {
         // Acceder al bot para verificar autenticación
         const bot = stepContext.context.turnState.get('bot');
         if (bot && bot.isUserAuthenticated && bot.isUserAuthenticated(userId)) {
+            console.log(`Usuario ${userId} ya autenticado, saltando prompt de autenticación`);
             return await stepContext.endDialog();
         }
         
@@ -107,7 +108,8 @@ class MainDialog extends LogoutDialog {
             const userData = {
                 token: tokenResponse.token,
                 email: tokenResponse.email || tokenResponse.upn || 'usuario@alfa.com',
-                name: tokenResponse.name || 'Usuario Alfa'
+                name: tokenResponse.name || 'Usuario Alfa',
+                context: context // Guardar el contexto para actualizar el estado
             };
             
             // Mostrar información de depuración sobre el token
@@ -142,6 +144,24 @@ class MainDialog extends LogoutDialog {
         if (userData) {
             await stepContext.context.sendActivity(`Bienvenido a Alfa, ${userData.name}. Ahora puedes interactuar con nuestros servicios.`);
             await stepContext.context.sendActivity('Puedes preguntar sobre el menú del comedor, buscar en el directorio, consultar incidentes o buscar información en nuestros documentos internos.');
+            
+            // Asegurarse de que el estado se guarde correctamente
+            const context = stepContext.context;
+            const userId = context.activity.from.id;
+            const conversationId = context.activity.conversation.id;
+            
+            // Intentar procesar el primer mensaje si existe
+            const message = stepContext.context.activity.text;
+            if (message && message.toLowerCase() !== 'login') {
+                console.log(`Procesando mensaje inicial: "${message}"`);
+                
+                // Obtener el bot
+                const bot = context.turnState.get('bot');
+                if (bot && bot.handleAuthenticatedMessage) {
+                    // Procesar el mensaje inicial después de la autenticación
+                    await bot.handleAuthenticatedMessage(context, message, userId, conversationId);
+                }
+            }
         }
         
         return await stepContext.endDialog();
