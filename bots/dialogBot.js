@@ -22,8 +22,6 @@ class DialogBot extends TeamsActivityHandler {
         this.dialogState = this.conversationState.createProperty('DialogState');
 
         this.onMessage(this.handleMessage.bind(this));
-        // Add handler for invoke activities
-        this.onInvokeActivity(this.handleInvokeActivity.bind(this));
     }
 
     /**
@@ -38,22 +36,6 @@ class DialogBot extends TeamsActivityHandler {
         await this.dialog.run(context, this.dialogState);
 
         await next();
-    }
-
-    /**
-     * Handle invoke activities - important for OAuth flow
-     * @param {TurnContext} context - The context object for the turn.
-     */
-    async handleInvokeActivity(context) {
-        console.log(`Handling invoke activity with name: ${context.activity.name}`);
-        
-        // For signin/verifyState and signin/tokenExchange, pass to dialog
-        if (context.activity.name === 'signin/verifyState' || context.activity.name === 'signin/tokenExchange') {
-            await this.dialog.run(context, this.dialogState);
-            return { status: 200 };
-        }
-        
-        return await super.onInvokeActivity(context);
     }
 
     /**

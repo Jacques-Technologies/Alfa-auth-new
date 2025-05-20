@@ -19,6 +19,9 @@ class TeamsBot extends DialogBot {
         // Agregar manejo de miembros añadidos y mensajes
         this.onMembersAdded(this.handleMembersAdded.bind(this));
         
+        // Registrar el manejador de actividades invoke correctamente
+        this.onInvokeActivity(this.handleInvokeActivity.bind(this));
+        
         // Mantener referencia a los servicios
         this.openaiService = openaiService;
         this.conversationService = conversationService;
@@ -69,15 +72,22 @@ class TeamsBot extends DialogBot {
                 // Enviar card de login explícitamente antes de iniciar el diálogo
                 if (!context.activity.value) { // Evitar enviar el card si es una respuesta a un card
                     const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
-                    const loginCard = CardFactory.oauthCard(
-                        connectionName,
-                        'Iniciar sesión',
-                        'Por favor inicia sesión con tu cuenta corporativa'
-                    );
+                    console.log(`Enviando OAuthCard con connectionName: ${connectionName}`);
                     
-                    await context.sendActivity({ 
-                        attachments: [loginCard] 
-                    });
+                    if (connectionName) {
+                        const loginCard = CardFactory.oauthCard(
+                            connectionName,
+                            'Iniciar sesión',
+                            'Por favor inicia sesión con tu cuenta corporativa'
+                        );
+                        
+                        await context.sendActivity({ 
+                            attachments: [loginCard] 
+                        });
+                    } else {
+                        console.error('No se pudo enviar OAuthCard: connectionName indefinido');
+                        await context.sendActivity('Error de configuración: No se pudo iniciar sesión. Contacta al administrador.');
+                    }
                 }
                 
                 // Pasar al flujo de diálogo para autenticación
@@ -94,6 +104,37 @@ class TeamsBot extends DialogBot {
         
         // Asegurarse de que se llame a next() para continuar con la cadena de middleware
         await next();
+    }
+    
+    /**
+     * Maneja actividades invoke (llamada de la API de Teams)
+     * @param {TurnContext} context - Contexto del turno
+     * @returns {Object} - Respuesta con código de estado
+     */
+    async handleInvokeActivity(context) {
+        // Verificar que context.activity existe
+        if (!context || !context.activity) {
+            console.error('handleInvokeActivity: context o context.activity es undefined');
+            return { status: 500 };
+        }
+        
+        // Acceder a name de forma segura
+        const activityName = context.activity.name || 'unknown';
+        console.log(`Actividad Invoke recibida: ${activityName}`);
+        
+        // Manejar actividades de invocación de Teams para OAuth
+        if (activityName === 'signin/verifyState') {
+            console.log('Procesando signin/verifyState');
+            await this.dialog.run(context, this.dialogState);
+            return { status: 200 };
+        } else if (activityName === 'signin/tokenExchange') {
+            console.log('Procesando signin/tokenExchange');
+            await this.dialog.run(context, this.dialogState);
+            return { status: 200 };
+        }
+        
+        console.log(`Delegando actividad invoke no manejada al padre: ${activityName}`);
+        return await super.onInvokeActivity(context);
     }
 
     /**
@@ -205,26 +246,6 @@ class TeamsBot extends DialogBot {
             return true;
         }
         return false;
-    }
-
-    /**
-     * Sobreescribe el método onInvokeActivity para manejar actividades de Teams
-     * @param {TurnContext} context - Contexto del turno
-     */
-    async onInvokeActivity(context) {
-        console.log(`Actividad Invoke recibida: ${context.activity.name}`);
-        
-        // Manejar actividades de invocación de Teams para OAuth
-        if (context.activity.name === 'signin/verifyState') {
-            await this.dialog.run(context, this.dialogState);
-            return { status: 200 };
-        } else if (context.activity.name === 'signin/tokenExchange') {
-            await this.dialog.run(context, this.dialogState);
-            return { status: 200 };
-        }
-        
-        // Para otras actividades de invoke, usar el handler predeterminado
-        return await super.onInvokeActivity(context);
     }
 
     /**
