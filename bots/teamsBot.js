@@ -26,9 +26,20 @@ class TeamsBot extends DialogBot {
         // Almacenar estado de autenticación de los usuarios
         this.authenticatedUsers = new Map();
 
-        // Manejar eventos específicos de Teams
-        this.onTeamsSigninVerifyState(this.handleTeamsSigninVerifyState.bind(this));
-        this.onTeamsSigninTokenExchange(this.handleTeamsSigninTokenExchange.bind(this));
+        // Registrar manejadores para eventos de Teams de inicio de sesión
+        // Corregido: en lugar de usar métodos que no existen, usamos el método onDialog
+        this.onDialog(async (context, next) => {
+            // Verificar si es una actividad de tipo 'invoke' con nombre 'signin/verifyState'
+            if (context.activity.type === 'invoke' && context.activity.name === 'signin/verifyState') {
+                await this.handleTeamsSigninVerifyState(context, context.activity.value);
+            }
+            // Verificar si es una actividad de tipo 'invoke' con nombre 'signin/tokenExchange'
+            else if (context.activity.type === 'invoke' && context.activity.name === 'signin/tokenExchange') {
+                await this.handleTeamsSigninTokenExchange(context, context.activity.value);
+            }
+            
+            await next();
+        });
     }
 
     /**
