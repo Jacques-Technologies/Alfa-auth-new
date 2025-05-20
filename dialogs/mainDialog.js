@@ -1,4 +1,5 @@
 const { ConfirmPrompt, DialogSet, DialogTurnStatus, OAuthPrompt, WaterfallDialog } = require('botbuilder-dialogs');
+const { CardFactory } = require('botbuilder');
 const { LogoutDialog } = require('./logoutDialog');
 
 const CONFIRM_PROMPT = 'ConfirmPrompt';
@@ -7,39 +8,38 @@ const MAIN_WATERFALL_DIALOG = 'MainWaterfallDialog';
 const OAUTH_PROMPT = 'OAuthPrompt';
 
 /**
- * MainDialog class that extends LogoutDialog to handle the main dialog flow.
+ * Diálogo principal extendido para manejar autenticación y OpenAI
  */
 class MainDialog extends LogoutDialog {
     /**
-     * Creates an instance of MainDialog.
-     * @param {string} id - The dialog ID.
-     * @param {string} connectionName - The connection name for the OAuth provider.
+     * Constructor del diálogo principal
      */
     constructor() {
         super(MAIN_DIALOG, process.env.connectionName);
 
+        // Crear prompts y diálogos necesarios
         this.addDialog(new OAuthPrompt(OAUTH_PROMPT, {
             connectionName: process.env.connectionName,
-            text: 'Este paso es necesario para el módulo de RH',
+            text: 'Por favor inicia sesión para acceder a los servicios de Alfa Bot',
             title: 'Iniciar sesión',
             timeout: 300000
         }));
+        
         this.addDialog(new ConfirmPrompt(CONFIRM_PROMPT));
+        
         this.addDialog(new WaterfallDialog(MAIN_WATERFALL_DIALOG, [
             this.promptStep.bind(this),
             this.loginStep.bind(this),
-            this.displayTokenPhase1.bind(this),
-            this.displayTokenPhase2.bind(this)
+            this.welcomeStep.bind(this)
         ]));
 
         this.initialDialogId = MAIN_WATERFALL_DIALOG;
     }
 
     /**
-     * The run method handles the incoming activity (in the form of a DialogContext) and passes it through the dialog system.
-     * If no dialog is active, it will start the default dialog.
-     * @param {TurnContext} context - The context object for the turn.
-     * @param {StatePropertyAccessor} accessor - The state property accessor for the dialog state.
+     * Ejecuta el diálogo principal
+     * @param {TurnContext} context - Contexto de la conversación
+     * @param {StatePropertyAccessor} accessor - Acceso al estado del diálogo
      */
     async run(context, accessor) {
         const dialogSet = new DialogSet(accessor);
@@ -53,50 +53,82 @@ class MainDialog extends LogoutDialog {
     }
 
     /**
-     * Prompts the user to sign in.
-     * @param {WaterfallStepContext} stepContext - The waterfall step context.
+     * Paso inicial de autenticación
+     * @param {WaterfallStepContext} stepContext - Contexto del paso
      */
     async promptStep(stepContext) {
+        // Verificar si el usuario ya está autenticado
+        const userId = stepContext.context.activity.from.id;
+        
+        // Acceder al bot para verificar autenticación
+        const bot = stepContext.context.turnState.get('bot');
+        if (bot && bot.isUserAuthenticated && bot.isUserAuthenticated(userId)) {
+            return await stepContext.endDialog();
+        }
+        
+        // Enviar mensaje claro al usuario sobre la autenticación
+        await stepContext.context.sendActivity('Para poder usar todas las funcionalidades de Alfa Bot, necesitas iniciar sesión.');
+        
+        // Crear tarjeta adaptativa para mejorar UX
+        const signinCard = CardFactory.signinCard(
+            'Acceder a Alfa Bot',
+            'Iniciar sesión',
+            `Haz clic en el botón para autenticarte`
+        );
+        
+        await stepContext.context.sendActivity({ attachments: [signinCard] });
+        
+        // Iniciar el diálogo OAuth
         return await stepContext.beginDialog(OAUTH_PROMPT);
     }
 
     /**
-     * Handles the login step.
-     * @param {WaterfallStepContext} stepContext - The waterfall step context.
+     * Maneja resultado de autenticación
+     * @param {WaterfallStepContext} stepContext - Contexto del paso
      */
     async loginStep(stepContext) {
         const tokenResponse = stepContext.result;
+        
         if (tokenResponse) {
-            await stepContext.context.sendActivity('Bienvenido a Alfa');
-            return await stepContext.prompt(CONFIRM_PROMPT, '¿Quieres ver tu token?');
+            // Obtener contexto e ID del usuario
+            const context = stepContext.context;
+            const userId = context.activity.from.id;
+            const conversationId = context.activity.conversation.id;
+            
+            // Usuario autenticado correctamente
+            const userData = {
+                token: tokenResponse.token,
+                email: tokenResponse.email || tokenResponse.upn || 'usuario@alfa.com',
+                name: tokenResponse.name || 'Usuario Alfa'
+            };
+            
+            // Acceder al bot para marcarlo como autenticado
+            const bot = context.turnState.get('bot');
+            if (bot && bot.setUserAuthenticated) {
+                await bot.setUserAuthenticated(userId, conversationId, userData);
+            }
+            
+            await context.sendActivity('¡Has iniciado sesión correctamente! 🎉');
+            return await stepContext.next(userData);
         }
-        await stepContext.context.sendActivity('No lograste iniciar sesión. Intente de nuevo');
+        
+        // Autenticación fallida
+        await stepContext.context.sendActivity('No se pudo iniciar sesión. Por favor, intenta escribiendo "login" nuevamente.');
         return await stepContext.endDialog();
     }
 
     /**
-     * Displays the token if the user confirms.
-     * @param {WaterfallStepContext} stepContext - The waterfall step context.
+     * Mensaje de bienvenida después del login exitoso
+     * @param {WaterfallStepContext} stepContext - Contexto del paso
      */
-    async displayTokenPhase1(stepContext) {
-        await stepContext.context.sendActivity('Gracias');
-
-        const result = stepContext.result;
-        if (result) {
-            return await stepContext.beginDialog(OAUTH_PROMPT);
+    async welcomeStep(stepContext) {
+        const userData = stepContext.result;
+        
+        if (userData) {
+            await stepContext.context.sendActivity(`Bienvenido a Alfa, ${userData.name}. Ahora puedes interactuar con nuestros servicios.`);
+            await stepContext.context.sendActivity('Puedes preguntar sobre el menú del comedor, buscar en el directorio, consultar incidentes o buscar información en nuestros documentos internos.');
         }
-        return await stepContext.endDialog();
-    }
-
-    /**
-     * Displays the token to the user.
-     * @param {WaterfallStepContext} stepContext - The waterfall step context.
-     */
-    async displayTokenPhase2(stepContext) {
-        const tokenResponse = stepContext.result;
-        if (tokenResponse) {
-            await stepContext.context.sendActivity(`Token: ${tokenResponse.token}`);
-        }
+        
         return await stepContext.endDialog();
     }
 }

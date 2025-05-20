@@ -2,13 +2,13 @@ const { ActivityTypes } = require('botbuilder');
 const { ComponentDialog } = require('botbuilder-dialogs');
 
 /**
- * LogoutDialog class that extends ComponentDialog to handle user logout.
+ * LogoutDialog extendido con detección de comando de logout y handler especial
  */
 class LogoutDialog extends ComponentDialog {
     /**
-     * Creates an instance of LogoutDialog.
-     * @param {string} id - The dialog ID.
-     * @param {string} connectionName - The connection name for the OAuth provider.
+     * Constructor de LogoutDialog
+     * @param {string} id - ID del diálogo
+     * @param {string} connectionName - Nombre de la conexión OAuth
      */
     constructor(id, connectionName) {
         super(id);
@@ -16,9 +16,9 @@ class LogoutDialog extends ComponentDialog {
     }
 
     /**
-     * Called when the dialog is started and pushed onto the dialog stack.
-     * @param {DialogContext} innerDc - The dialog context for the current turn of conversation.
-     * @param {Object} options - Optional. Initial information to pass to the dialog.
+     * Se ejecuta al iniciar el diálogo
+     * @param {DialogContext} innerDc - Contexto del diálogo
+     * @param {Object} options - Opciones iniciales
      */
     async onBeginDialog(innerDc, options) {
         const result = await this.interrupt(innerDc);
@@ -30,8 +30,8 @@ class LogoutDialog extends ComponentDialog {
     }
 
     /**
-     * Called when the dialog is the active dialog and the user replies with a new activity.
-     * @param {DialogContext} innerDc - The dialog context for the current turn of conversation.
+     * Se ejecuta al continuar el diálogo
+     * @param {DialogContext} innerDc - Contexto del diálogo
      */
     async onContinueDialog(innerDc) {
         const result = await this.interrupt(innerDc);
@@ -43,19 +43,29 @@ class LogoutDialog extends ComponentDialog {
     }
 
     /**
-     * Checks for 'logout' message and signs the user out if detected.
-     * @param {DialogContext} innerDc - The dialog context for the current turn of conversation.
+     * Procesa la interrupción por comando de logout
+     * @param {DialogContext} innerDc - Contexto del diálogo
      */
     async interrupt(innerDc) {
         if (innerDc.context.activity.type === ActivityTypes.Message) {
             const text = innerDc.context.activity.text.toLowerCase();
-            if (text === 'logout') {
+            
+            // Detectar varios posibles comandos de logout
+            if (text === 'logout' || text === 'cerrar sesión' || text === 'salir' || text === 'cerrar sesion') {
+                // Obtener el cliente de tokens de usuario
                 const userTokenClient = innerDc.context.turnState.get(innerDc.context.adapter.UserTokenClientKey);
-
                 const { activity } = innerDc.context;
+                
+                // Cerrar sesión con el proveedor OAuth
                 await userTokenClient.signOutUser(activity.from.id, this.connectionName, activity.channelId);
-
-                await innerDc.context.sendActivity('Cerraste sesión exitosamente.');
+                
+                // Además, marcar como no autenticado en el bot
+                const bot = innerDc.context.turnState.get('bot');
+                if (bot && bot.logoutUser) {
+                    bot.logoutUser(activity.from.id);
+                }
+                
+                await innerDc.context.sendActivity('Has cerrado sesión exitosamente. Escribe algo para iniciar sesión nuevamente.');
                 return await innerDc.cancelAllDialogs();
             }
         }
