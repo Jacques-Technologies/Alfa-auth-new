@@ -13,7 +13,6 @@ class LogoutDialog extends ComponentDialog {
     constructor(id, connectionName) {
         super(id);
         this.connectionName = connectionName;
-        console.log(`LogoutDialog inicializado con connectionName: ${connectionName}`);
     }
 
     /**
@@ -22,7 +21,6 @@ class LogoutDialog extends ComponentDialog {
      * @param {Object} options - Optional. Initial information to pass to the dialog.
      */
     async onBeginDialog(innerDc, options) {
-        console.log('LogoutDialog.onBeginDialog llamado');
         const result = await this.interrupt(innerDc);
         if (result) {
             return result;
@@ -36,7 +34,6 @@ class LogoutDialog extends ComponentDialog {
      * @param {DialogContext} innerDc - The dialog context for the current turn of conversation.
      */
     async onContinueDialog(innerDc) {
-        console.log('LogoutDialog.onContinueDialog llamado');
         const result = await this.interrupt(innerDc);
         if (result) {
             return result;
@@ -51,40 +48,15 @@ class LogoutDialog extends ComponentDialog {
      */
     async interrupt(innerDc) {
         if (innerDc.context.activity.type === ActivityTypes.Message) {
-            const text = innerDc.context.activity.text?.toLowerCase() || '';
-            
+            const text = innerDc.context.activity.text.toLowerCase();
             if (text === 'logout') {
-                console.log('Comando de logout detectado');
-                
-                try {
-                    // Obtener el cliente de token
-                    const userTokenClient = innerDc.context.turnState.get(innerDc.context.adapter.UserTokenClientKey);
-                    
-                    if (userTokenClient) {
-                        const { activity } = innerDc.context;
-                        // Cerrar sesión del usuario
-                        await userTokenClient.signOutUser(
-                            activity.from.id, 
-                            this.connectionName, 
-                            activity.channelId
-                        );
-                        
-                        // Actualizar estado de autenticación en el bot
-                        const bot = innerDc.context.turnState.get('bot');
-                        if (bot && typeof bot.logoutUser === 'function') {
-                            bot.logoutUser(activity.from.id);
-                        }
-                        
-                        await innerDc.context.sendActivity('Has cerrado sesión exitosamente. Escribe "login" para iniciar sesión nuevamente.');
-                        return await innerDc.cancelAllDialogs();
-                    } else {
-                        console.error('No se encontró el cliente de token');
-                        await innerDc.context.sendActivity('No se pudo cerrar sesión. Por favor, intenta nuevamente.');
-                    }
-                } catch (error) {
-                    console.error(`Error al cerrar sesión: ${error.message}`);
-                    await innerDc.context.sendActivity('Ocurrió un error al cerrar sesión. Por favor, intenta nuevamente.');
-                }
+                const userTokenClient = innerDc.context.turnState.get(innerDc.context.adapter.UserTokenClientKey);
+
+                const { activity } = innerDc.context;
+                await userTokenClient.signOutUser(activity.from.id, this.connectionName, activity.channelId);
+
+                await innerDc.context.sendActivity('Cerraste sesión exitosamente.');
+                return await innerDc.cancelAllDialogs();
             }
         }
     }
