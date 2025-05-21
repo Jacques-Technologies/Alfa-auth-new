@@ -3,6 +3,7 @@
 
 const { ConfirmPrompt, DialogSet, DialogTurnStatus, OAuthPrompt, WaterfallDialog } = require('botbuilder-dialogs');
 const { LogoutDialog } = require('./logoutDialog');
+const { SimpleGraphClient } = require('../simpleGraphClient');
 const { CardFactory } = require('botbuilder-core');
 
 const CONFIRM_PROMPT = 'ConfirmPrompt';
@@ -72,6 +73,7 @@ class MainDialog extends LogoutDialog {
             await stepContext.context.sendActivity('Login was not successful, please try again.');
             return await stepContext.endDialog();
         } else {
+            const client = new SimpleGraphClient(tokenResponse.token);
             const me = await client.getMe();
             const title = me ? me.jobTitle : 'Unknown';
             await stepContext.context.sendActivity(`You're logged in as ${me.displayName} (${me.userPrincipalName}); your job title is: ${title}; your photo is: `);
