@@ -41,6 +41,9 @@ class MainDialog extends LogoutDialog {
         ]));
 
         this.initialDialogId = MAIN_WATERFALL_DIALOG;
+        
+        // Añadir una propiedad para rastrear diálogos completados
+        this.completedDialogs = new Set();
     }
 
     /**
@@ -54,6 +57,21 @@ class MainDialog extends LogoutDialog {
         
         // Asegurarse de que el bot esté disponible en el contexto
         this._ensureBotInContext(context);
+        
+        // Verificar si el usuario ya está autenticado
+        const userId = context.activity.from.id;
+        const bot = context.turnState.get('bot');
+        const authState = await bot?.authState?.get(context, {});
+        const isAuthenticated = authState[userId]?.authenticated || false;
+        
+        // Verificar si este diálogo ya se completó para este usuario
+        const dialogCompleted = this.completedDialogs.has(userId);
+        
+        // Si el usuario ya está autenticado y este diálogo ya se completó, no iniciar otro
+        if (isAuthenticated && dialogCompleted) {
+            console.log(`Usuario ${userId} ya autenticado y diálogo completado, no iniciando otro`);
+            return;
+        }
         
         const dialogSet = new DialogSet(accessor);
         dialogSet.add(this);
@@ -108,6 +126,7 @@ class MainDialog extends LogoutDialog {
     async loginStep(stepContext) {
         console.log('loginStep ejecutado, respuesta: ', stepContext.result ? 'token obtenido' : 'sin token');
         const tokenResponse = stepContext.result;
+        const userId = stepContext.context.activity.from.id;
         
         if (tokenResponse) {
             // Intentar obtener el bot del contexto
@@ -125,13 +144,16 @@ class MainDialog extends LogoutDialog {
                 try {
                     // Marcar al usuario como autenticado en el bot
                     await bot.setUserAuthenticated(
-                        stepContext.context.activity.from.id,
+                        userId,
                         stepContext.context.activity.conversation.id,
                         userData
                     );
                     
                     // Mensaje de bienvenida al usuario
                     await stepContext.context.sendActivity('¡Has iniciado sesión exitosamente! Ahora puedes hacer preguntas y el agente de OpenAI te responderá. ¿En qué puedo ayudarte hoy?');
+                    
+                    // Marcar este diálogo como completado para este usuario
+                    this.completedDialogs.add(userId);
                 } catch (error) {
                     console.error(`Error al procesar autenticación: ${error.message}`);
                     console.error(error.stack);
@@ -147,7 +169,6 @@ class MainDialog extends LogoutDialog {
                     if (userState) {
                         const authState = userState.createProperty('AuthState');
                         const authData = await authState.get(stepContext.context, {});
-                        const userId = stepContext.context.activity.from.id;
                         
                         authData[userId] = {
                             authenticated: true,
@@ -160,6 +181,9 @@ class MainDialog extends LogoutDialog {
                         await userState.saveChanges(stepContext.context);
                         
                         await stepContext.context.sendActivity('¡Has iniciado sesión exitosamente! Ahora puedes hacer preguntas y el agente de OpenAI te responderá. ¿En qué puedo ayudarte hoy?');
+                        
+                        // Marcar este diálogo como completado para este usuario
+                        this.completedDialogs.add(userId);
                     } else {
                         await stepContext.context.sendActivity('Ocurrió un error en la configuración. Por favor, contacta al administrador.');
                     }

@@ -63,6 +63,9 @@ class TeamsBot extends DialogBot {
         // Estado de autenticación
         this.authenticatedUsers = new Map();
         this.authState = this.userState.createProperty('AuthState');
+        
+        // Registro de diálogos activos para evitar duplicados
+        this.activeDialogs = new Set();
     }
 
     /**
@@ -102,9 +105,22 @@ class TeamsBot extends DialogBot {
             
             console.log(`Estado de autenticación para usuario ${userId}: ${isAuthenticated ? 'Autenticado' : 'No autenticado'}`);
             
+            // Crear un identificador único para este mensaje
+            const messageId = `${userId}-${conversationId}-${Date.now()}`;
+            
             // Si el usuario escribe "login" o no está autenticado
             if (messageText.toLowerCase() === 'login' || !isAuthenticated) {
                 console.log('Usuario no autenticado o solicitó login, iniciando flujo de autenticación');
+                
+                // Verificar si ya hay un diálogo activo para este usuario
+                const dialogKey = `auth-${userId}`;
+                if (this.activeDialogs.has(dialogKey)) {
+                    console.log(`Ya hay un diálogo de autenticación activo para el usuario ${userId}, no iniciando otro`);
+                    return await next();
+                }
+                
+                // Marcar este diálogo como activo
+                this.activeDialogs.add(dialogKey);
                 
                 // Enviar card de inicio de sesión
                 if (!context.activity.value) {
@@ -126,6 +142,9 @@ class TeamsBot extends DialogBot {
                 
                 // Iniciar diálogo de autenticación
                 await this.dialog.run(context, this.dialogState);
+                
+                // Remover el diálogo de la lista de activos al finalizar
+                this.activeDialogs.delete(dialogKey);
             } else {
                 // Usuario autenticado, procesar con OpenAI
                 console.log(`Procesando mensaje autenticado: "${messageText}"`);
@@ -182,18 +201,27 @@ class TeamsBot extends DialogBot {
             const activityName = context.activity.name || 'unknown';
             console.log(`Actividad invoke recibida: ${activityName}`);
             
+            // Crear un identificador único para este usuario
+            const userId = context.activity.from.id;
+            const dialogKey = `auth-${userId}`;
+            
             // Manejar actividades específicas de OAuth
             if (activityName === 'signin/verifyState') {
                 console.log('Procesando signin/verifyState');
+                this.activeDialogs.add(dialogKey);
                 await this.dialog.run(context, this.dialogState);
+                this.activeDialogs.delete(dialogKey);
                 return { status: 200 };
             } else if (activityName === 'signin/tokenExchange') {
                 console.log('Procesando signin/tokenExchange');
+                this.activeDialogs.add(dialogKey);
                 await this.dialog.run(context, this.dialogState);
+                this.activeDialogs.delete(dialogKey);
                 return { status: 200 };
             } else if (activityName === 'signin/failure') {
                 console.log('Procesando signin/failure - Error de autenticación');
                 await context.sendActivity('Hubo un problema con la autenticación. Por favor, intenta nuevamente escribiendo "login".');
+                this.activeDialogs.delete(dialogKey);
                 return { status: 200 };
             }
             
@@ -207,30 +235,6 @@ class TeamsBot extends DialogBot {
             console.error(error.stack);
             return { status: 500 };
         }
-    }
-
-    /**
-     * Handles the specific invoke activities for Teams authentication.
-     * @param {TurnContext} context - The context object for the turn.
-     * @param {Object} query - The query object from the invoke activity.
-     */
-    async handleTeamsSigninVerifyState(context, query) {
-        console.log('handleTeamsSigninVerifyState llamado');
-        // Asegurarse de que la instancia del bot esté disponible en el contexto
-        this._ensureBotInContext(context);
-        await this.dialog.run(context, this.dialogState);
-    }
-    
-    /**
-     * Handles token exchange for Teams authentication.
-     * @param {TurnContext} context - The context object for the turn.
-     * @param {Object} query - The query object from the invoke activity.
-     */
-    async handleTeamsSigninTokenExchange(context, query) {
-        console.log('handleTeamsSigninTokenExchange llamado');
-        // Asegurarse de que la instancia del bot esté disponible en el contexto
-        this._ensureBotInContext(context);
-        await this.dialog.run(context, this.dialogState);
     }
 
     /**
