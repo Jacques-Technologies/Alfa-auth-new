@@ -31,6 +31,8 @@ class DialogBot extends TeamsActivityHandler {
         this.dialog = dialog;
         this.dialogState = this.conversationState.createProperty('DialogState');
 
+        // Solo registramos el manejador de mensajes aquí
+        // Los manejadores de invoke se registrarán en la clase hija
         this.onMessage(this.handleMessage.bind(this));
     }
 

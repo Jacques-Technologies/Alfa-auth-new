@@ -22,8 +22,8 @@ class TeamsBot extends DialogBot {
         // Sobreescribir manejador de mensajes
         this.onMessage(this.handleMessageWithAuth.bind(this));
         
-        // Agregar manejador de invoke para OAuth
-        this.onInvokeActivity(this.handleInvokeActivity.bind(this));
+        // NO registrar un manejador de actividades "invoke" en el constructor
+        // Esto causa el error que estás experimentando
         
         // Servicios para OpenAI y CosmosDB
         this.openaiService = openaiService;
@@ -106,34 +106,67 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * Handles the Teams invoke activities for authentication.
+     * Override the onInvokeActivity method from TeamsActivityHandler.
+     * This handles OAuth and other Teams invoke activities.
      * @param {TurnContext} context - The context object for the turn.
+     * @returns {Object} - The response for the invoke activity.
      */
-    async handleInvokeActivity(context) {
+    async onInvokeActivity(context) {
         try {
-            // Verificar que context.activity existe
+            // Verificar si tenemos una actividad válida
             if (!context || !context.activity) {
-                console.error('handleInvokeActivity: context o context.activity es undefined');
+                console.error('onInvokeActivity: context o context.activity es undefined');
                 return { status: 500 };
             }
             
-            // Acceder a name de forma segura
+            // Obtener el nombre de la actividad de forma segura
             const activityName = context.activity.name || 'unknown';
             console.log(`Actividad invoke recibida: ${activityName}`);
             
-            // Manejar actividades de autenticación
-            if (activityName === 'signin/verifyState' || activityName === 'signin/tokenExchange') {
-                console.log(`Procesando actividad de autenticación: ${activityName}`);
+            // Manejar actividades específicas de OAuth
+            if (activityName === 'signin/verifyState') {
+                console.log('Procesando signin/verifyState');
                 await this.dialog.run(context, this.dialogState);
+                return { status: 200 };
+            } else if (activityName === 'signin/tokenExchange') {
+                console.log('Procesando signin/tokenExchange');
+                await this.dialog.run(context, this.dialogState);
+                return { status: 200 };
+            } else if (activityName === 'signin/failure') {
+                console.log('Procesando signin/failure - Error de autenticación');
+                await context.sendActivity('Hubo un problema con la autenticación. Por favor, intenta nuevamente escribiendo "login".');
                 return { status: 200 };
             }
             
-            // Delegar a clase padre para otros tipos
-            return { status: 501 }; // Not Implemented
+            // Para otras actividades, usar el método de la clase padre
+            console.log(`Delegando actividad ${activityName} al manejo predeterminado`);
+            
+            // Llamar al método de la clase padre de forma segura
+            return await super.onInvokeActivity(context);
         } catch (error) {
-            console.error(`Error en handleInvokeActivity: ${error.message}`);
+            console.error(`Error en onInvokeActivity: ${error.message}`);
             return { status: 500 };
         }
+    }
+
+    /**
+     * Handles the specific invoke activities for Teams authentication.
+     * @param {TurnContext} context - The context object for the turn.
+     * @param {Object} query - The query object from the invoke activity.
+     */
+    async handleTeamsSigninVerifyState(context, query) {
+        console.log('handleTeamsSigninVerifyState llamado');
+        await this.dialog.run(context, this.dialogState);
+    }
+    
+    /**
+     * Handles token exchange for Teams authentication.
+     * @param {TurnContext} context - The context object for the turn.
+     * @param {Object} query - The query object from the invoke activity.
+     */
+    async handleTeamsSigninTokenExchange(context, query) {
+        console.log('handleTeamsSigninTokenExchange llamado');
+        await this.dialog.run(context, this.dialogState);
     }
 
     /**
