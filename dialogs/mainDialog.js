@@ -1,5 +1,10 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+
 const { ConfirmPrompt, DialogSet, DialogTurnStatus, OAuthPrompt, WaterfallDialog } = require('botbuilder-dialogs');
 const { LogoutDialog } = require('./logoutDialog');
+const { SimpleGraphClient } = require('../simpleGraphClient');
+const { CardFactory } = require('botbuilder-core');
 
 const CONFIRM_PROMPT = 'ConfirmPrompt';
 const MAIN_DIALOG = 'MainDialog';
@@ -7,12 +12,11 @@ const MAIN_WATERFALL_DIALOG = 'MainWaterfallDialog';
 const OAUTH_PROMPT = 'OAuthPrompt';
 
 /**
- * sMainDialog class that extends LogoutDialog to handle the main dialog flow.
+ * MainDialog class extends LogoutDialog to handle the main dialog flow.
  */
 class MainDialog extends LogoutDialog {
     /**
      * Creates an instance of MainDialog.
-     * @param {string} id - The dialog ID.
      * @param {string} connectionName - The connection name for the OAuth provider.
      */
     constructor() {
@@ -20,16 +24,16 @@ class MainDialog extends LogoutDialog {
 
         this.addDialog(new OAuthPrompt(OAUTH_PROMPT, {
             connectionName: process.env.connectionName,
-            text: 'Este paso es necesario para el módulo de RH',
-            title: 'Iniciar sesión',
+            text: 'Please Sign In',
+            title: 'Sign In',
             timeout: 300000
         }));
         this.addDialog(new ConfirmPrompt(CONFIRM_PROMPT));
         this.addDialog(new WaterfallDialog(MAIN_WATERFALL_DIALOG, [
             this.promptStep.bind(this),
             this.loginStep.bind(this),
-            this.displayTokenPhase1.bind(this),
-            this.displayTokenPhase2.bind(this)
+            this.ensureOAuth.bind(this),
+            this.displayToken.bind(this)
         ]));
 
         this.initialDialogId = MAIN_WATERFALL_DIALOG;
@@ -44,7 +48,6 @@ class MainDialog extends LogoutDialog {
     async run(context, accessor) {
         const dialogSet = new DialogSet(accessor);
         dialogSet.add(this);
-
         const dialogContext = await dialogSet.createContext(context);
         const results = await dialogContext.continueDialog();
         if (results.status === DialogTurnStatus.empty) {
@@ -66,20 +69,27 @@ class MainDialog extends LogoutDialog {
      */
     async loginStep(stepContext) {
         const tokenResponse = stepContext.result;
-        if (tokenResponse) {
-            await stepContext.context.sendActivity('Bienvenido a Alfa');
-            return await stepContext.prompt(CONFIRM_PROMPT, '¿Quieres ver tu token?');
+        if (!tokenResponse || !tokenResponse.token) {
+            await stepContext.context.sendActivity('Login was not successful, please try again.');
+            return await stepContext.endDialog();
+        } else {
+            const client = new SimpleGraphClient(tokenResponse.token);
+            const me = await client.getMe();
+            const title = me ? me.jobTitle : 'Unknown';
+            await stepContext.context.sendActivity(`You're logged in as ${me.displayName} (${me.userPrincipalName}); your job title is: ${title}; your photo is: `);
+            const photoBase64 = await client.GetPhotoAsync(tokenResponse.token);
+            const card = CardFactory.thumbnailCard("", CardFactory.images([photoBase64]));
+            await stepContext.context.sendActivity({ attachments: [card] });
+            return await stepContext.prompt(CONFIRM_PROMPT, 'Would you like to view your token?');
         }
-        await stepContext.context.sendActivity('No lograste iniciar sesión. Intente de nuevo');
-        return await stepContext.endDialog();
     }
 
     /**
-     * Displays the token if the user confirms.
+     * Ensures the OAuth token is available.
      * @param {WaterfallStepContext} stepContext - The waterfall step context.
      */
-    async displayTokenPhase1(stepContext) {
-        await stepContext.context.sendActivity('Gracias');
+    async ensureOAuth(stepContext) {
+        await stepContext.context.sendActivity('Thank you.');
 
         const result = stepContext.result;
         if (result) {
@@ -89,13 +99,13 @@ class MainDialog extends LogoutDialog {
     }
 
     /**
-     * Displays the token to the user.
+     * Displays the OAuth token to the user.
      * @param {WaterfallStepContext} stepContext - The waterfall step context.
      */
-    async displayTokenPhase2(stepContext) {
+    async displayToken(stepContext) {
         const tokenResponse = stepContext.result;
-        if (tokenResponse) {
-            await stepContext.context.sendActivity(`Token: ${tokenResponse.token}`);
+        if (tokenResponse && tokenResponse.token) {
+            await stepContext.context.sendActivity(`Here is your token: ${tokenResponse.token}`);
         }
         return await stepContext.endDialog();
     }

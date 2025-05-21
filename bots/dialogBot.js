@@ -1,7 +1,10 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+
 const { TeamsActivityHandler } = require('botbuilder');
 
 /**
- * DialogBot class that extends TeamsActivityHandler to handle Teams activities.
+ * DialogBot class extends TeamsActivityHandler to handle Teams activities.
  */
 class DialogBot extends TeamsActivityHandler {
     /**
@@ -12,9 +15,16 @@ class DialogBot extends TeamsActivityHandler {
      */
     constructor(conversationState, userState, dialog) {
         super();
-        if (!conversationState) throw new Error('[DialogBot]: Missing parameter. conversationState is required');
-        if (!userState) throw new Error('[DialogBot]: Missing parameter. userState is required');
-        if (!dialog) throw new Error('[DialogBot]: Missing parameter. dialog is required');
+
+        if (!conversationState) {
+            throw new Error('[DialogBot]: Missing parameter. conversationState is required');
+        }
+        if (!userState) {
+            throw new Error('[DialogBot]: Missing parameter. userState is required');
+        }
+        if (!dialog) {
+            throw new Error('[DialogBot]: Missing parameter. dialog is required');
+        }
 
         this.conversationState = conversationState;
         this.userState = userState;
@@ -27,7 +37,7 @@ class DialogBot extends TeamsActivityHandler {
     /**
      * Handles incoming message activities.
      * @param {TurnContext} context - The context object for the turn.
-     * @param {function} next - The next middleware function in the pipeline.
+     * @param {Function} next - The next middleware function in the pipeline.
      */
     async handleMessage(context, next) {
         console.log('Running dialog with Message Activity.');
