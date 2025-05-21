@@ -7,7 +7,7 @@ const MAIN_WATERFALL_DIALOG = 'MainWaterfallDialog';
 const OAUTH_PROMPT = 'OAuthPrompt';
 
 /**
- * MainDialog class that extends LogoutDialog to handle the main dialog flow.
+ * sMainDialog class that extends LogoutDialog to handle the main dialog flow.
  */
 class MainDialog extends LogoutDialog {
     /**
