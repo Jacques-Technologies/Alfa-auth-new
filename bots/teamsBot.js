@@ -1,10 +1,10 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
-
 const { DialogBot } = require('./dialogBot');
+const { CardFactory } = require('botbuilder');
+const openaiService = require('../services/openaiService');
+const conversationService = require('../services/conversationService');
 
 /**
- * TeamsBot class extends DialogBot to handle Teams-specific activities.
+ * TeamsBot class extends DialogBot to handle Teams-specific activities and OpenAI integration.
  */
 class TeamsBot extends DialogBot {
     /**
@@ -16,7 +16,22 @@ class TeamsBot extends DialogBot {
     constructor(conversationState, userState, dialog) {
         super(conversationState, userState, dialog);
 
+        // Agregar manejador de miembros añadidos
         this.onMembersAdded(this.handleMembersAdded.bind(this));
+        
+        // Sobreescribir manejador de mensajes
+        this.onMessage(this.handleMessageWithAuth.bind(this));
+        
+        // Agregar manejador de invoke para OAuth
+        this.onInvokeActivity(this.handleInvokeActivity.bind(this));
+        
+        // Servicios para OpenAI y CosmosDB
+        this.openaiService = openaiService;
+        this.conversationService = conversationService;
+        
+        // Estado de autenticación
+        this.authenticatedUsers = new Map();
+        this.authState = this.userState.createProperty('AuthState');
     }
 
     /**
@@ -28,30 +43,212 @@ class TeamsBot extends DialogBot {
         const membersAdded = context.activity.membersAdded;
         for (const member of membersAdded) {
             if (member.id !== context.activity.recipient.id) {
-                await context.sendActivity('Welcome to TeamsBot. Type anything to get logged in. Type \'logout\' to sign-out.');
+                await context.sendActivity('Bienvenido a Alfa Bot. Escribe "login" para iniciar sesión y poder hacer preguntas.');
             }
         }
         await next();
     }
 
     /**
-     * Handles the Teams signin verify state.
+     * Handles incoming messages with authentication check.
      * @param {TurnContext} context - The context object for the turn.
-     * @param {Object} query - The query object from the invoke activity.
+     * @param {Function} next - The next middleware function in the pipeline.
      */
-    async handleTeamsSigninVerifyState(context, query) {
-        console.log('Running dialog with signin/verifystate from an Invoke Activity.');
-        await this.dialog.run(context, this.dialogState);
+    async handleMessageWithAuth(context, next) {
+        console.log('TeamsBot.handleMessageWithAuth llamado');
+        
+        try {
+            const userId = context.activity.from.id;
+            const conversationId = context.activity.conversation.id;
+            const messageText = context.activity.text || '';
+            
+            // Recuperar estado de autenticación
+            const authData = await this.authState.get(context, {});
+            const isAuthenticated = authData[userId]?.authenticated || false;
+            
+            console.log(`Estado de autenticación para usuario ${userId}: ${isAuthenticated ? 'Autenticado' : 'No autenticado'}`);
+            
+            // Si el usuario escribe "login" o no está autenticado
+            if (messageText.toLowerCase() === 'login' || !isAuthenticated) {
+                console.log('Usuario no autenticado o solicitó login, iniciando flujo de autenticación');
+                
+                // Enviar card de inicio de sesión
+                if (!context.activity.value) {
+                    const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
+                    console.log(`Usando connectionName: ${connectionName}`);
+                    
+                    if (connectionName) {
+                        const loginCard = CardFactory.oauthCard(
+                            connectionName,
+                            'Iniciar Sesión',
+                            'Por favor inicia sesión para continuar'
+                        );
+                        
+                        await context.sendActivity({ attachments: [loginCard] });
+                    } else {
+                        await context.sendActivity('Error: No se ha configurado el nombre de conexión OAuth.');
+                    }
+                }
+                
+                // Iniciar diálogo de autenticación
+                await this.dialog.run(context, this.dialogState);
+            } else {
+                // Usuario autenticado, procesar con OpenAI
+                console.log(`Procesando mensaje autenticado: "${messageText}"`);
+                await this.processOpenAIMessage(context, messageText, userId, conversationId);
+            }
+        } catch (error) {
+            console.error(`Error en handleMessageWithAuth: ${error.message}`);
+            await context.sendActivity('Ocurrió un error al procesar tu mensaje. Por favor, intenta de nuevo o escribe "login".');
+        }
+        
+        await next();
     }
 
     /**
-     * Handles the Teams signin token exchange.
+     * Handles the Teams invoke activities for authentication.
      * @param {TurnContext} context - The context object for the turn.
-     * @param {Object} query - The query object from the invoke activity.
      */
-    async handleTeamsSigninTokenExchange(context, query) {
-        console.log('Running dialog with signin/tokenExchange from an Invoke Activity.');
-        await this.dialog.run(context, this.dialogState);
+    async handleInvokeActivity(context) {
+        try {
+            // Verificar que context.activity existe
+            if (!context || !context.activity) {
+                console.error('handleInvokeActivity: context o context.activity es undefined');
+                return { status: 500 };
+            }
+            
+            // Acceder a name de forma segura
+            const activityName = context.activity.name || 'unknown';
+            console.log(`Actividad invoke recibida: ${activityName}`);
+            
+            // Manejar actividades de autenticación
+            if (activityName === 'signin/verifyState' || activityName === 'signin/tokenExchange') {
+                console.log(`Procesando actividad de autenticación: ${activityName}`);
+                await this.dialog.run(context, this.dialogState);
+                return { status: 200 };
+            }
+            
+            // Delegar a clase padre para otros tipos
+            return { status: 501 }; // Not Implemented
+        } catch (error) {
+            console.error(`Error en handleInvokeActivity: ${error.message}`);
+            return { status: 500 };
+        }
+    }
+
+    /**
+     * Processes a message using OpenAI.
+     * @param {TurnContext} context - The context object for the turn.
+     * @param {string} message - The message to process.
+     * @param {string} userId - The user ID.
+     * @param {string} conversationId - The conversation ID.
+     */
+    async processOpenAIMessage(context, message, userId, conversationId) {
+        try {
+            // Indicar que estamos procesando
+            await context.sendActivity({ type: 'typing' });
+            
+            // Guardar mensaje del usuario
+            await this.conversationService.saveMessage(
+                message,
+                conversationId,
+                userId
+            );
+            
+            // Obtener historial de conversación
+            const history = await this.conversationService.getConversationHistory(conversationId);
+            
+            // Formatear historial para OpenAI
+            const formattedHistory = history.map(item => ({
+                type: item.userId === userId ? 'user' : 'assistant',
+                message: item.message
+            }));
+            
+            // Enviar a OpenAI
+            const response = await this.openaiService.procesarMensaje(message, formattedHistory);
+            
+            // Guardar respuesta
+            await this.conversationService.saveMessage(
+                response,
+                conversationId,
+                'bot'
+            );
+            
+            // Actualizar timestamp
+            await this.conversationService.updateLastActivity(conversationId);
+            
+            // Enviar respuesta al usuario
+            await context.sendActivity(response);
+        } catch (error) {
+            console.error(`Error en processOpenAIMessage: ${error.message}`);
+            await context.sendActivity('Lo siento, ocurrió un error al procesar tu solicitud con OpenAI.');
+        }
+    }
+
+    /**
+     * Marks a user as authenticated.
+     * @param {string} userId - The user ID.
+     * @param {string} conversationId - The conversation ID.
+     * @param {Object} userData - The user data.
+     */
+    async setUserAuthenticated(userId, conversationId, userData) {
+        try {
+            // Guardar en memoria
+            this.authenticatedUsers.set(userId, userData);
+            
+            // Guardar en estado persistente
+            const context = userData.context;
+            if (context) {
+                const authData = await this.authState.get(context, {});
+                authData[userId] = {
+                    authenticated: true,
+                    email: userData.email,
+                    name: userData.name,
+                    lastAuthenticated: new Date().toISOString()
+                };
+                await this.authState.set(context, authData);
+                
+                // Guardar cambios
+                await this.userState.saveChanges(context);
+            }
+            
+            // Crear conversación en CosmosDB
+            try {
+                await this.conversationService.createConversation(conversationId, userId);
+                console.log(`Conversación creada para usuario ${userId}`);
+            } catch (error) {
+                console.log(`Posible conversación ya existente: ${error.message}`);
+            }
+            
+            console.log(`Usuario ${userId} autenticado correctamente.`);
+            return true;
+        } catch (error) {
+            console.error(`Error al marcar usuario como autenticado: ${error.message}`);
+            return false;
+        }
+    }
+
+    /**
+     * Checks if a user is authenticated.
+     * @param {string} userId - The user ID.
+     * @returns {boolean} Whether the user is authenticated.
+     */
+    isUserAuthenticated(userId) {
+        return this.authenticatedUsers.has(userId);
+    }
+
+    /**
+     * Logs out a user.
+     * @param {string} userId - The user ID.
+     * @returns {boolean} Whether the logout was successful.
+     */
+    logoutUser(userId) {
+        if (this.authenticatedUsers.has(userId)) {
+            this.authenticatedUsers.delete(userId);
+            console.log(`Usuario ${userId} ha cerrado sesión.`);
+            return true;
+        }
+        return false;
     }
 }
 

@@ -1,10 +1,6 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
-
 const { ConfirmPrompt, DialogSet, DialogTurnStatus, OAuthPrompt, WaterfallDialog } = require('botbuilder-dialogs');
 const { LogoutDialog } = require('./logoutDialog');
-const { SimpleGraphClient } = require('../simpleGraphClient');
-const { CardFactory } = require('botbuilder-core');
+const { CardFactory } = require('botbuilder');
 
 const CONFIRM_PROMPT = 'ConfirmPrompt';
 const MAIN_DIALOG = 'MainDialog';
@@ -17,23 +13,31 @@ const OAUTH_PROMPT = 'OAuthPrompt';
 class MainDialog extends LogoutDialog {
     /**
      * Creates an instance of MainDialog.
-     * @param {string} connectionName - The connection name for the OAuth provider.
      */
     constructor() {
-        super(MAIN_DIALOG, process.env.connectionName);
+        // Obtener connectionName desde las variables de entorno
+        const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
+        
+        if (!connectionName) {
+            console.error('ERROR: El nombre de conexión OAuth no está configurado');
+        }
+        
+        super(MAIN_DIALOG, connectionName);
+        console.log(`MainDialog inicializado con connectionName: ${connectionName}`);
 
         this.addDialog(new OAuthPrompt(OAUTH_PROMPT, {
-            connectionName: process.env.connectionName,
-            text: 'Please Sign In',
-            title: 'Sign In',
+            connectionName: connectionName,
+            text: 'Este paso es necesario para autenticarte',
+            title: 'Iniciar Sesión',
             timeout: 300000
         }));
+        
         this.addDialog(new ConfirmPrompt(CONFIRM_PROMPT));
+        
+        // Simplificar el flujo a solo dos pasos: prompt y login
         this.addDialog(new WaterfallDialog(MAIN_WATERFALL_DIALOG, [
             this.promptStep.bind(this),
-            this.loginStep.bind(this),
-            this.ensureOAuth.bind(this),
-            this.displayToken.bind(this)
+            this.loginStep.bind(this)
         ]));
 
         this.initialDialogId = MAIN_WATERFALL_DIALOG;
@@ -46,12 +50,18 @@ class MainDialog extends LogoutDialog {
      * @param {StatePropertyAccessor} accessor - The state property accessor for the dialog state.
      */
     async run(context, accessor) {
+        console.log('MainDialog.run() llamado');
         const dialogSet = new DialogSet(accessor);
         dialogSet.add(this);
+
         const dialogContext = await dialogSet.createContext(context);
         const results = await dialogContext.continueDialog();
+        
         if (results.status === DialogTurnStatus.empty) {
+            console.log('DialogContext vacío, iniciando MainDialog');
             await dialogContext.beginDialog(this.id);
+        } else {
+            console.log(`Continuando diálogo existente, estado: ${results.status}`);
         }
     }
 
@@ -60,6 +70,7 @@ class MainDialog extends LogoutDialog {
      * @param {WaterfallStepContext} stepContext - The waterfall step context.
      */
     async promptStep(stepContext) {
+        console.log('Iniciando promptStep para autenticación OAuth');
         return await stepContext.beginDialog(OAUTH_PROMPT);
     }
 
@@ -68,45 +79,44 @@ class MainDialog extends LogoutDialog {
      * @param {WaterfallStepContext} stepContext - The waterfall step context.
      */
     async loginStep(stepContext) {
+        console.log('loginStep ejecutado, respuesta: ', stepContext.result ? 'token obtenido' : 'sin token');
         const tokenResponse = stepContext.result;
-        if (!tokenResponse || !tokenResponse.token) {
-            await stepContext.context.sendActivity('Login was not successful, please try again.');
+        
+        if (tokenResponse) {
+            const bot = stepContext.context.turnState.get('bot');
+            
+            if (bot) {
+                // Registrar al usuario como autenticado
+                let userData = {
+                    token: tokenResponse.token,
+                    context: stepContext.context,
+                    email: 'usuario@empresa.com',
+                    name: 'Usuario Autenticado'
+                };
+                
+                try {
+                    // Marcar al usuario como autenticado en el bot
+                    await bot.setUserAuthenticated(
+                        stepContext.context.activity.from.id,
+                        stepContext.context.activity.conversation.id,
+                        userData
+                    );
+                    
+                    // Mensaje de bienvenida al usuario
+                    await stepContext.context.sendActivity('¡Has iniciado sesión exitosamente! Ahora puedes hacer preguntas y el agente de OpenAI te responderá. ¿En qué puedo ayudarte hoy?');
+                } catch (error) {
+                    console.error(`Error al procesar autenticación: ${error.message}`);
+                    await stepContext.context.sendActivity('Ocurrió un error durante la autenticación. Por favor, intenta nuevamente.');
+                }
+            } else {
+                console.error('No se encontró la instancia del bot en el contexto');
+                await stepContext.context.sendActivity('Ocurrió un error en la configuración. Por favor, contacta al administrador.');
+            }
+            
             return await stepContext.endDialog();
-        } else {
-            const client = new SimpleGraphClient(tokenResponse.token);
-            const me = await client.getMe();
-            const title = me ? me.jobTitle : 'Unknown';
-            await stepContext.context.sendActivity(`You're logged in as ${me.displayName} (${me.userPrincipalName}); your job title is: ${title}; your photo is: `);
-            const photoBase64 = await client.GetPhotoAsync(tokenResponse.token);
-            const card = CardFactory.thumbnailCard("", CardFactory.images([photoBase64]));
-            await stepContext.context.sendActivity({ attachments: [card] });
-            return await stepContext.prompt(CONFIRM_PROMPT, 'Would you like to view your token?');
         }
-    }
-
-    /**
-     * Ensures the OAuth token is available.
-     * @param {WaterfallStepContext} stepContext - The waterfall step context.
-     */
-    async ensureOAuth(stepContext) {
-        await stepContext.context.sendActivity('Thank you.');
-
-        const result = stepContext.result;
-        if (result) {
-            return await stepContext.beginDialog(OAUTH_PROMPT);
-        }
-        return await stepContext.endDialog();
-    }
-
-    /**
-     * Displays the OAuth token to the user.
-     * @param {WaterfallStepContext} stepContext - The waterfall step context.
-     */
-    async displayToken(stepContext) {
-        const tokenResponse = stepContext.result;
-        if (tokenResponse && tokenResponse.token) {
-            await stepContext.context.sendActivity(`Here is your token: ${tokenResponse.token}`);
-        }
+        
+        await stepContext.context.sendActivity('No se pudo completar la autenticación. Por favor, intenta escribiendo "login" nuevamente.');
         return await stepContext.endDialog();
     }
 }
