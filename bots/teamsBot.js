@@ -1,5 +1,7 @@
 const { DialogBot } = require('./dialogBot');
 const { CardFactory } = require('botbuilder');
+
+// Importar los servicios correctamente
 const openaiService = require('../services/openaiService');
 const conversationService = require('../services/conversationService');
 
@@ -29,9 +31,34 @@ class TeamsBot extends DialogBot {
         // NO registrar un manejador de actividades "invoke" en el constructor
         // Esto causa el error que estabas experimentando
         
-        // Servicios para OpenAI y CosmosDB
+        // Servicios para OpenAI y CosmosDB - guardados como propiedades de la instancia
         this.openaiService = openaiService;
         this.conversationService = conversationService;
+        
+        // Verificar que el servicio OpenAI se importó correctamente
+        if (!this.openaiService || typeof this.openaiService.procesarMensaje !== 'function') {
+            console.error('ERROR: openaiService no se importó correctamente o no tiene el método procesarMensaje');
+            // Crear un respaldo básico si no está disponible
+            this.openaiService = {
+                procesarMensaje: async (mensaje) => `Lo siento, el servicio de OpenAI no está disponible (Error de importación). Tu mensaje fue: "${mensaje}"`
+            };
+        } else {
+            console.log('Servicio OpenAI importado correctamente');
+        }
+        
+        // Verificar que el servicio de conversación se importó correctamente
+        if (!this.conversationService || typeof this.conversationService.saveMessage !== 'function') {
+            console.error('ERROR: conversationService no se importó correctamente o no tiene el método saveMessage');
+            // Crear un respaldo básico si no está disponible
+            this.conversationService = {
+                saveMessage: async () => ({}),
+                getConversationHistory: async () => [],
+                createConversation: async () => ({}),
+                updateLastActivity: async () => ({})
+            };
+        } else {
+            console.log('Servicio de conversación importado correctamente');
+        }
         
         // Estado de autenticación
         this.authenticatedUsers = new Map();
@@ -215,18 +242,36 @@ class TeamsBot extends DialogBot {
      */
     async processOpenAIMessage(context, message, userId, conversationId) {
         try {
+            // Verificar que el servicio OpenAI está disponible
+            if (!this.openaiService || typeof this.openaiService.procesarMensaje !== 'function') {
+                console.error('El servicio OpenAI no está disponible o no tiene el método procesarMensaje');
+                await context.sendActivity('Lo siento, el servicio de OpenAI no está disponible en este momento. Por favor, contacta al administrador.');
+                return;
+            }
+            
             // Indicar que estamos procesando
             await context.sendActivity({ type: 'typing' });
             
-            // Guardar mensaje del usuario
-            await this.conversationService.saveMessage(
-                message,
-                conversationId,
-                userId
-            );
+            // Intentar guardar el mensaje, pero continuar si falla
+            try {
+                await this.conversationService.saveMessage(
+                    message,
+                    conversationId,
+                    userId
+                );
+            } catch (error) {
+                console.error(`Error al guardar mensaje: ${error.message}`);
+                // Continuar aunque falle el guardado
+            }
             
-            // Obtener historial de conversación
-            const history = await this.conversationService.getConversationHistory(conversationId);
+            // Intentar obtener el historial, pero usar un array vacío si falla
+            let history = [];
+            try {
+                history = await this.conversationService.getConversationHistory(conversationId);
+            } catch (error) {
+                console.error(`Error al obtener historial: ${error.message}`);
+                // Continuar con historial vacío
+            }
             
             // Formatear historial para OpenAI
             const formattedHistory = history.map(item => ({
@@ -237,22 +282,27 @@ class TeamsBot extends DialogBot {
             // Enviar a OpenAI
             const response = await this.openaiService.procesarMensaje(message, formattedHistory);
             
-            // Guardar respuesta
-            await this.conversationService.saveMessage(
-                response,
-                conversationId,
-                'bot'
-            );
-            
-            // Actualizar timestamp
-            await this.conversationService.updateLastActivity(conversationId);
+            // Intentar guardar la respuesta, pero continuar si falla
+            try {
+                await this.conversationService.saveMessage(
+                    response,
+                    conversationId,
+                    'bot'
+                );
+                
+                // Actualizar timestamp
+                await this.conversationService.updateLastActivity(conversationId);
+            } catch (error) {
+                console.error(`Error al guardar respuesta: ${error.message}`);
+                // Continuar aunque falle el guardado
+            }
             
             // Enviar respuesta al usuario
             await context.sendActivity(response);
         } catch (error) {
             console.error(`Error en processOpenAIMessage: ${error.message}`);
             console.error(error.stack);
-            await context.sendActivity('Lo siento, ocurrió un error al procesar tu solicitud con OpenAI.');
+            await context.sendActivity('Lo siento, ocurrió un error al procesar tu solicitud con OpenAI. Por favor, intenta nuevamente.');
         }
     }
 
