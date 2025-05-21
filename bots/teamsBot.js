@@ -16,6 +16,10 @@ class TeamsBot extends DialogBot {
     constructor(conversationState, userState, dialog) {
         super(conversationState, userState, dialog);
 
+        // Registrar la instancia globalmente para poder accederla desde otras partes
+        global.botInstance = this;
+        console.log('Instancia del bot registrada globalmente');
+
         // Agregar manejador de miembros añadidos
         this.onMembersAdded(this.handleMembersAdded.bind(this));
         
@@ -23,7 +27,7 @@ class TeamsBot extends DialogBot {
         this.onMessage(this.handleMessageWithAuth.bind(this));
         
         // NO registrar un manejador de actividades "invoke" en el constructor
-        // Esto causa el error que estás experimentando
+        // Esto causa el error que estabas experimentando
         
         // Servicios para OpenAI y CosmosDB
         this.openaiService = openaiService;
@@ -56,6 +60,9 @@ class TeamsBot extends DialogBot {
      */
     async handleMessageWithAuth(context, next) {
         console.log('TeamsBot.handleMessageWithAuth llamado');
+        
+        // Asegurarse de que la instancia del bot esté disponible en el contexto
+        this._ensureBotInContext(context);
         
         try {
             const userId = context.activity.from.id;
@@ -99,10 +106,32 @@ class TeamsBot extends DialogBot {
             }
         } catch (error) {
             console.error(`Error en handleMessageWithAuth: ${error.message}`);
+            console.error(error.stack);
             await context.sendActivity('Ocurrió un error al procesar tu mensaje. Por favor, intenta de nuevo o escribe "login".');
         }
         
         await next();
+    }
+    
+    /**
+     * Asegura que la instancia del bot esté disponible en el contexto
+     * @param {TurnContext} context - El contexto del turno actual
+     * @private
+     */
+    _ensureBotInContext(context) {
+        if (!context.turnState.get('bot')) {
+            context.turnState.set('bot', this);
+            console.log('Bot añadido al contexto del turno');
+        }
+        
+        // También asegurar que los estados estén disponibles
+        if (!context.turnState.get('ConversationState')) {
+            context.turnState.set('ConversationState', this.conversationState);
+        }
+        
+        if (!context.turnState.get('UserState')) {
+            context.turnState.set('UserState', this.userState);
+        }
     }
 
     /**
@@ -113,6 +142,9 @@ class TeamsBot extends DialogBot {
      */
     async onInvokeActivity(context) {
         try {
+            // Asegurarse de que la instancia del bot esté disponible en el contexto
+            this._ensureBotInContext(context);
+            
             // Verificar si tenemos una actividad válida
             if (!context || !context.activity) {
                 console.error('onInvokeActivity: context o context.activity es undefined');
@@ -145,6 +177,7 @@ class TeamsBot extends DialogBot {
             return await super.onInvokeActivity(context);
         } catch (error) {
             console.error(`Error en onInvokeActivity: ${error.message}`);
+            console.error(error.stack);
             return { status: 500 };
         }
     }
@@ -156,6 +189,8 @@ class TeamsBot extends DialogBot {
      */
     async handleTeamsSigninVerifyState(context, query) {
         console.log('handleTeamsSigninVerifyState llamado');
+        // Asegurarse de que la instancia del bot esté disponible en el contexto
+        this._ensureBotInContext(context);
         await this.dialog.run(context, this.dialogState);
     }
     
@@ -166,6 +201,8 @@ class TeamsBot extends DialogBot {
      */
     async handleTeamsSigninTokenExchange(context, query) {
         console.log('handleTeamsSigninTokenExchange llamado');
+        // Asegurarse de que la instancia del bot esté disponible en el contexto
+        this._ensureBotInContext(context);
         await this.dialog.run(context, this.dialogState);
     }
 
@@ -214,6 +251,7 @@ class TeamsBot extends DialogBot {
             await context.sendActivity(response);
         } catch (error) {
             console.error(`Error en processOpenAIMessage: ${error.message}`);
+            console.error(error.stack);
             await context.sendActivity('Lo siento, ocurrió un error al procesar tu solicitud con OpenAI.');
         }
     }
@@ -257,6 +295,7 @@ class TeamsBot extends DialogBot {
             return true;
         } catch (error) {
             console.error(`Error al marcar usuario como autenticado: ${error.message}`);
+            console.error(error.stack);
             return false;
         }
     }

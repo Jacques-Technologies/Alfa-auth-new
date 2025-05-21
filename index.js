@@ -89,19 +89,26 @@ server.use(
     }
 );
 
-// Ruta principal para mensajes de bot
-server.post('/api/messages', async (req, res) => {
-    // Configurar turno de estado para acceder al bot desde los diálogos
-    req.turnState = req.turnState || new Map();
+// Middleware para agregar la instancia del bot al estado del turno
+const addBotToTurnState = (req, res, next) => {
+    // Si no existe turnState, crearlo
+    if (!req.turnState) {
+        req.turnState = new Map();
+    }
+    // Agregar la instancia del bot al estado del turno
     req.turnState.set('bot', bot);
-    
-    // Proceso de depuración - log para verificar actividades
+    return next();
+};
+
+// Ruta principal para mensajes de bot, con el middleware de bot
+server.post('/api/messages', addBotToTurnState, async (req, res) => {
+    // Registro de actividad
     try {
         const body = req.body;
         if (body) {
             console.log(`Actividad recibida - Tipo: ${body.type}, Nombre: ${body.name || 'N/A'}`);
             
-            // Imprimir más información para depuración
+            // Log adicional para mensajes
             if (body.type === 'message') {
                 console.log(`Mensaje: "${body.text}"`);
             } else if (body.type === 'invoke') {
