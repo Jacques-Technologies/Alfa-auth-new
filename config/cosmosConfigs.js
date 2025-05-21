@@ -2,24 +2,18 @@ const { CosmosClient } = require('@azure/cosmos');
 require('dotenv').config();
 
 /**
- * Configuración para la conexión a CosmosDB
+ * Configuración para la conexión a CosmosDB con manejo de errores
  */
 class CosmosDbConfig {
     constructor() {
-        // Valores de configuración desde variables de entorno
-        this.endpoint = process.env.COSMOSDB_ENDPOINT;
-        this.key = process.env.COSMOSDB_KEY;
-        this.databaseId = process.env.COSMOSDB_DATABASE_ID;
-        this.containerId = process.env.COSMOSDB_CONVERSATIONS_CONTAINER;
+        this.initialized = false;
+        this.container = null;
         
-        // Cliente de Cosmos
-        this.client = new CosmosClient({ 
-            endpoint: this.endpoint, 
-            key: this.key 
+        // Intentar inicializar, pero no bloquear si falla
+        this.initializationPromise = this.init().catch(error => {
+            console.error(`Error al inicializar CosmosDB: ${error.message}`);
+            this.initialized = false;
         });
-        
-        // Inicialización de recursos de Cosmos
-        this.init();
     }
 
     /**
@@ -27,6 +21,25 @@ class CosmosDbConfig {
      */
     async init() {
         try {
+            // Verificar si la configuración está disponible
+            this.endpoint = process.env.COSMOSDB_ENDPOINT;
+            this.key = process.env.COSMOSDB_KEY;
+            this.databaseId = process.env.COSMOSDB_DATABASE_ID;
+            this.containerId = process.env.COSMOSDB_CONVERSATIONS_CONTAINER;
+            
+            // Si falta alguna configuración, registrar el error y salir
+            if (!this.endpoint || !this.key || !this.databaseId || !this.containerId) {
+                console.warn('Falta configuración de CosmosDB. Algunas funciones pueden no estar disponibles.');
+                this.initialized = false;
+                return;
+            }
+            
+            // Cliente de Cosmos
+            this.client = new CosmosClient({ 
+                endpoint: this.endpoint, 
+                key: this.key 
+            });
+            
             // Crear base de datos si no existe
             const { database } = await this.client.databases.createIfNotExists({
                 id: this.databaseId
@@ -41,18 +54,34 @@ class CosmosDbConfig {
             console.log(`Contenedor ${this.containerId} configurado exitosamente`);
 
             this.container = container;
+            this.initialized = true;
         } catch (error) {
             console.error(`Error al inicializar CosmosDB: ${error.message}`);
+            this.initialized = false;
+            
+            // Re-lanzar el error para que se pueda manejar externamente
             throw error;
         }
     }
 
     /**
-     * Obtiene el contenedor para las conversaciones
-     * @returns {Object} Contenedor de CosmosDB
+     * Obtiene el contenedor para las conversaciones de manera segura
+     * @returns {Object|null} Contenedor de CosmosDB o null si no está disponible
      */
     getConversationContainer() {
+        if (!this.initialized || !this.container) {
+            console.warn('Contenedor de CosmosDB no inicializado');
+            throw new Error('Contenedor de CosmosDB no disponible');
+        }
         return this.container;
+    }
+    
+    /**
+     * Verifica si el servicio de CosmosDB está disponible
+     * @returns {boolean} Estado de disponibilidad
+     */
+    isAvailable() {
+        return this.initialized && this.container !== null;
     }
 }
 

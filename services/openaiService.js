@@ -10,17 +10,44 @@ require('dotenv').config();
  */
 class OpenAIService {
     constructor() {
-        // Inicializar cliente de OpenAI
-        this.openai = new OpenAI({ 
-            apiKey: process.env.OPENAI_API_KEY 
-        });
+        // Inicializar cliente de OpenAI si está configurado
+        try {
+            const apiKey = process.env.OPENAI_API_KEY;
+            if (!apiKey) {
+                console.warn('No se ha configurado OPENAI_API_KEY');
+                this.openaiAvailable = false;
+            } else {
+                this.openai = new OpenAI({ apiKey });
+                this.openaiAvailable = true;
+                console.log('OpenAIService: Cliente de OpenAI inicializado correctamente');
+            }
+        } catch (error) {
+            console.error(`Error al inicializar OpenAI: ${error.message}`);
+            this.openaiAvailable = false;
+        }
 
-        // Cliente de Azure Cognitive Search
-        this.searchClient = new SearchClient(
-            process.env.SERVICE_ENDPOINT,
-            process.env.INDEX_NAME || 'alfa_bot',
-            new AzureKeyCredential(process.env.API_KEY)
-        );
+        // Inicializar cliente de Azure Cognitive Search si está configurado
+        try {
+            const serviceEndpoint = process.env.SERVICE_ENDPOINT;
+            const apiKey = process.env.API_KEY;
+            const indexName = process.env.INDEX_NAME || 'alfa_bot';
+            
+            if (!serviceEndpoint || !apiKey) {
+                console.warn('No se ha configurado Azure Search correctamente');
+                this.searchAvailable = false;
+            } else {
+                this.searchClient = new SearchClient(
+                    serviceEndpoint,
+                    indexName,
+                    new AzureKeyCredential(apiKey)
+                );
+                this.searchAvailable = true;
+                console.log('OpenAIService: Cliente de Azure Search inicializado correctamente');
+            }
+        } catch (error) {
+            console.error(`Error al inicializar Azure Search: ${error.message}`);
+            this.searchAvailable = false;
+        }
 
         // Definir herramientas disponibles para el agente
         this.tools = this.defineTools();
@@ -31,7 +58,7 @@ class OpenAIService {
      * @returns {Array} Lista de herramientas en formato OpenAI
      */
     defineTools() {
-        return [
+        const tools = [
             {
                 type: "function",
                 function: {
@@ -42,8 +69,12 @@ class OpenAIService {
                         properties: {}
                     }
                 }
-            },
-            {
+            }
+        ];
+        
+        // Añadir herramienta de búsqueda si Azure Search está disponible
+        if (this.searchAvailable) {
+            tools.push({
                 type: "function",
                 function: {
                     name: "referencias",
@@ -59,135 +90,155 @@ class OpenAIService {
                         required: ["consulta"]
                     }
                 }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "comedor",
-                    description: "Consulta el menú del comedor.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            filtro_dia: { 
-                                type: "string", 
-                                description: "Día a consultar" 
-                            }
-                        },
-                        required: ["filtro_dia"]
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "informacion_personal",
-                    description: "Datos personales de un empleado.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            email: { 
-                                type: "string", 
-                                description: "Correo institucional" 
-                            }
-                        },
-                        required: ["email"]
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "directorio",
-                    description: "Búsqueda en directorio.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            nombre: { 
-                                type: "string", 
-                                description: "Nombre" 
+            });
+        }
+        
+        // Añadir otras herramientas si las APIs correspondientes están configuradas
+        if (process.env.TOKEN_BUBBLE) {
+            tools.push(
+                {
+                    type: "function",
+                    function: {
+                        name: "comedor",
+                        description: "Consulta el menú del comedor.",
+                        parameters: {
+                            type: "object",
+                            properties: {
+                                filtro_dia: { 
+                                    type: "string", 
+                                    description: "Día a consultar" 
+                                }
                             },
-                            apellido: { 
-                                type: "string", 
-                                description: "Apellido" 
-                            }
-                        },
-                        required: ["nombre", "apellido"]
+                            required: ["filtro_dia"]
+                        }
+                    }
+                },
+                {
+                    type: "function",
+                    function: {
+                        name: "informacion_personal",
+                        description: "Datos personales de un empleado.",
+                        parameters: {
+                            type: "object",
+                            properties: {
+                                email: { 
+                                    type: "string", 
+                                    description: "Correo institucional" 
+                                }
+                            },
+                            required: ["email"]
+                        }
+                    }
+                },
+                {
+                    type: "function",
+                    function: {
+                        name: "directorio",
+                        description: "Búsqueda en directorio.",
+                        parameters: {
+                            type: "object",
+                            properties: {
+                                nombre: { 
+                                    type: "string", 
+                                    description: "Nombre" 
+                                },
+                                apellido: { 
+                                    type: "string", 
+                                    description: "Apellido" 
+                                }
+                            },
+                            required: ["nombre", "apellido"]
+                        }
                     }
                 }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "get_incident",
-                    description: "Obtiene un incidente por número.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            number: { 
-                                type: "string", 
-                                description: "Número de incidente" 
-                            }
-                        },
-                        required: ["number"]
+            );
+        }
+        
+        // Añadir herramientas de ServiceNow si la API está configurada
+        if (process.env.TOKEN_API) {
+            tools.push(
+                {
+                    type: "function",
+                    function: {
+                        name: "get_incident",
+                        description: "Obtiene un incidente por número.",
+                        parameters: {
+                            type: "object",
+                            properties: {
+                                number: { 
+                                    type: "string", 
+                                    description: "Número de incidente" 
+                                }
+                            },
+                            required: ["number"]
+                        }
+                    }
+                },
+                {
+                    type: "function",
+                    function: {
+                        name: "get_incident_key_list",
+                        description: "Lista incidentes que cumplen un query.",
+                        parameters: {
+                            type: "object",
+                            properties: {
+                                query: { 
+                                    type: "string", 
+                                    description: "Texto de búsqueda" 
+                                }
+                            },
+                            required: ["query"]
+                        }
+                    }
+                },
+                {
+                    type: "function",
+                    function: {
+                        name: "create_incident_by_ci",
+                        description: "Crea un incidente.",
+                        parameters: {
+                            type: "object",
+                            properties: {
+                                category: { type: "string" },
+                                cmdb_ci: { type: "string" },
+                                company: { type: "string" },
+                                description: { type: "string" },
+                                impact: { type: "string" },
+                                short_description: { type: "string" },
+                                subcategory: { type: "string" }
+                            },
+                            required: [
+                                "category",
+                                "cmdb_ci",
+                                "company",
+                                "description",
+                                "impact",
+                                "short_description",
+                                "subcategory"
+                            ]
+                        }
                     }
                 }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "get_incident_key_list",
-                    description: "Lista incidentes que cumplen un query.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            query: { 
-                                type: "string", 
-                                description: "Texto de búsqueda" 
-                            }
-                        },
-                        required: ["query"]
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "create_incident_by_ci",
-                    description: "Crea un incidente.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            category: { type: "string" },
-                            cmdb_ci: { type: "string" },
-                            company: { type: "string" },
-                            description: { type: "string" },
-                            impact: { type: "string" },
-                            short_description: { type: "string" },
-                            subcategory: { type: "string" }
-                        },
-                        required: [
-                            "category",
-                            "cmdb_ci",
-                            "company",
-                            "description",
-                            "impact",
-                            "short_description",
-                            "subcategory"
-                        ]
-                    }
-                }
-            }
-        ];
+            );
+        }
+        
+        return tools;
     }
 
     /**
      * Procesa una consulta con el agente de OpenAI
      * @param {string} mensaje - Mensaje del usuario
      * @param {Array} historial - Historial de conversación
-     * @returns {Object} - Respuesta del agente
+     * @returns {String} - Respuesta del agente
      */
     async procesarMensaje(mensaje, historial) {
         try {
+            // Verificar que OpenAI esté disponible
+            if (!this.openaiAvailable) {
+                console.error('OpenAI no está configurado correctamente');
+                return "Lo siento, el servicio de OpenAI no está disponible en este momento. Por favor, contacta al administrador.";
+            }
+            
             // Convertir historial al formato esperado por OpenAI
             const mensajes = this.formatearHistorial(historial);
             
@@ -233,13 +284,14 @@ class OpenAIService {
             return messageResponse.content;
         } catch (error) {
             console.error(`Error al procesar mensaje con OpenAI: ${error.message}`);
+            console.error(error.stack);
             return "Lo siento, hubo un error al procesar tu solicitud. Por favor, inténtalo de nuevo.";
         }
     }
 
     /**
      * Formatea historial de conversación al formato de OpenAI
-     * @param {Array} historial - Historial desde CosmosDB
+     * @param {Array} historial - Historial desde CosmosDB o memoria
      * @returns {Array} - Mensajes en formato OpenAI
      */
     formatearHistorial(historial) {
@@ -261,7 +313,7 @@ class OpenAIService {
                      Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yyyy')}`
         }];
 
-        // Convertir mensajes del historial
+        // Convertir mensajes del historial, si hay alguno
         if (historial && historial.length > 0) {
             historial.forEach(item => {
                 if (item.message) {
@@ -296,8 +348,17 @@ class OpenAIService {
             const { name, arguments: args } = fnCall;
             
             try {
+                // Intentar parsear los argumentos
+                let parsedArgs;
+                try {
+                    parsedArgs = JSON.parse(args);
+                } catch (parseError) {
+                    console.error(`Error al parsear argumentos para ${name}: ${parseError.message}`);
+                    parsedArgs = {};
+                }
+                
                 // Ejecutar la herramienta correspondiente
-                const resultado = await this.ejecutarHerramienta(name, JSON.parse(args));
+                const resultado = await this.ejecutarHerramienta(name, parsedArgs);
                 
                 // Agregar resultado al mensaje
                 resultados.push({
@@ -362,6 +423,11 @@ class OpenAIService {
      */
     async ejecutarReferencias(consulta) {
         try {
+            // Verificar que el servicio de búsqueda esté disponible
+            if (!this.searchAvailable || !this.searchClient) {
+                return "El servicio de búsqueda no está disponible en este momento.";
+            }
+            
             /* 1. Embedding del texto */
             const emb = await this.openai.embeddings.create({
                 model: 'text-embedding-3-large',
@@ -412,9 +478,15 @@ class OpenAIService {
                 );
                 if (chunks.length >= 8) break;
             }
+            
+            if (chunks.length === 0) {
+                return "No se encontraron documentos relevantes para esta consulta.";
+            }
+            
             return chunks.join('\n');
         } catch (error) {
-            return `Error en referencias: ${error.message}`;
+            console.error(`Error en referencias: ${error.message}`);
+            return `No se pudo realizar la búsqueda en este momento. Error: ${error.message}`;
         }
     }
 
@@ -425,6 +497,11 @@ class OpenAIService {
      */
     async ejecutarComedor(filtro_dia) {
         try {
+            // Verificar que el token de Bubble esté configurado
+            if (!process.env.TOKEN_BUBBLE) {
+                return { error: "El servicio de comedor no está configurado" };
+            }
+            
             const res = await axios.post(
                 'https://alfa-48373.bubbleapps.io/api/1.1/wf/comedor',
                 { dia: filtro_dia },
@@ -432,6 +509,7 @@ class OpenAIService {
             );
             return res.data;
         } catch (error) {
+            console.error(`Error en comedor: ${error.message}`);
             return { error: `Error en comedor: ${error.message}` };
         }
     }
@@ -443,6 +521,11 @@ class OpenAIService {
      */
     async ejecutarInformacionPersonal(email) {
         try {
+            // Verificar que el token de Bubble esté configurado
+            if (!process.env.TOKEN_BUBBLE) {
+                return { error: "El servicio de información personal no está configurado" };
+            }
+            
             const res = await axios.post(
                 'https://alfa-48373.bubbleapps.io/api/1.1/wf/datos-personales',
                 { email },
@@ -450,6 +533,7 @@ class OpenAIService {
             );
             return res.data;
         } catch (error) {
+            console.error(`Error en informacion_personal: ${error.message}`);
             return { error: `Error en informacion_personal: ${error.message}` };
         }
     }
@@ -462,6 +546,11 @@ class OpenAIService {
      */
     async ejecutarDirectorio(nombre, apellido) {
         try {
+            // Verificar que el token de Bubble esté configurado
+            if (!process.env.TOKEN_BUBBLE) {
+                return { error: "El servicio de directorio no está configurado" };
+            }
+            
             const res = await axios.post(
                 'https://alfa-48373.bubbleapps.io/api/1.1/wf/directorio',
                 { Nombre: nombre, Apellido: apellido },
@@ -469,6 +558,7 @@ class OpenAIService {
             );
             return res.data;
         } catch (error) {
+            console.error(`Error en directorio: ${error.message}`);
             return { error: `Error en directorio: ${error.message}` };
         }
     }
@@ -480,6 +570,11 @@ class OpenAIService {
      */
     async ejecutarGetIncident(number) {
         try {
+            // Verificar que el token de API esté configurado
+            if (!process.env.TOKEN_API) {
+                return { error: "El servicio de incidentes no está configurado" };
+            }
+            
             const res = await axios.get(
                 'https://api.supporttsmx.com.mx/TSMX/SNOW/Incident/GetIncident',
                 {
@@ -490,6 +585,7 @@ class OpenAIService {
             );
             return res.data;
         } catch (error) {
+            console.error(`Error en get_incident: ${error.message}`);
             return { error: error.message };
         }
     }
@@ -501,6 +597,11 @@ class OpenAIService {
      */
     async ejecutarGetIncidentKeyList(query) {
         try {
+            // Verificar que el token de API esté configurado
+            if (!process.env.TOKEN_API) {
+                return { error: "El servicio de incidentes no está configurado" };
+            }
+            
             const res = await axios.get(
                 'https://api.supporttsmx.com.mx/TSMX/SNOW/Incident/GetIncidentKeyListQuery',
                 {
@@ -511,6 +612,7 @@ class OpenAIService {
             );
             return res.data;
         } catch (error) {
+            console.error(`Error en get_incident_key_list: ${error.message}`);
             return { error: error.message };
         }
     }
@@ -522,6 +624,11 @@ class OpenAIService {
      */
     async ejecutarCreateIncidentByCI(parametros) {
         try {
+            // Verificar que el token de API esté configurado
+            if (!process.env.TOKEN_API) {
+                return { error: "El servicio de incidentes no está configurado" };
+            }
+            
             const res = await axios.post(
                 'https://api.supporttsmx.com.mx/TSMX/SNOW/Incident/CreateIncidentbyCI',
                 parametros,
@@ -532,9 +639,8 @@ class OpenAIService {
             );
             return res.data;
         } catch (error) {
+            console.error(`Error en create_incident_by_ci: ${error.message}`);
             return { error: error.message };
         }
     }
 }
-
-module.exports = new OpenAIService();
