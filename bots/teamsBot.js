@@ -145,6 +145,10 @@ class TeamsBot extends DialogBot {
                 
                 // Remover el diálogo de la lista de activos al finalizar
                 this.activeDialogs.delete(dialogKey);
+            } else if (messageText.toLowerCase() === 'acciones' || messageText.toLowerCase() === 'menú') {
+                // Usuario autenticado y solicita ver las acciones
+                console.log('Usuario autenticado solicitó ver las acciones, mostrando tarjetas dinámicas');
+                await this._sendActionCards(context);
             } else {
                 // Usuario autenticado, procesar con OpenAI
                 console.log(`Procesando mensaje autenticado: "${messageText}"`);
@@ -157,6 +161,183 @@ class TeamsBot extends DialogBot {
         }
         
         await next();
+    }
+
+    /**
+     * Envía tarjetas dinámicas con las acciones disponibles al usuario autenticado.
+     * @param {TurnContext} context
+     * @private
+     */
+    async _sendActionCards(context) {
+        const actions = [
+            {
+                title: 'Obtener información del empleado',
+                description: 'Consulta la información básica del empleado.',
+                method: 'GET',
+                url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/empleado',
+                fields: []
+            },
+            {
+                title: 'Obtener solicitudes del empleado',
+                description: 'Consulta todas las solicitudes de vacaciones del empleado.',
+                method: 'GET',
+                url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/empleado',
+                fields: []
+            },
+            {
+                title: 'Obtener solicitud por ID',
+                description: 'Consulta una solicitud específica por su ID.',
+                method: 'GET',
+                url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}',
+                fields: [
+                    { id: 'idSolicitud', type: 'text', label: 'ID de Solicitud', value: '' }
+                ]
+            },
+            {
+                title: 'Obtener solicitudes de dependientes',
+                description: 'Consulta las solicitudes de vacaciones de los dependientes.',
+                method: 'GET',
+                url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/dependientes',
+                fields: []
+            },
+            {
+                title: 'Simular solicitud de vacaciones',
+                description: 'Simula una solicitud de vacaciones para un rango de fechas.',
+                method: 'POST',
+                url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{fechaInicio}/{fechaFin}/{medioDia}/{simular}',
+                fields: [
+                    { id: 'fechaInicio', type: 'date', label: 'Fecha inicio', value: '' },
+                    { id: 'fechaFin', type: 'date', label: 'Fecha fin', value: '' },
+                    { id: 'medioDia', type: 'choice', label: '¿Medio día?', value: 'false', choices: ['true', 'false'] },
+                    { id: 'simular', type: 'choice', label: '¿Simular?', value: 'true', choices: ['true', 'false'] }
+                ]
+            },
+            {
+                title: 'Cancelar solicitud',
+                description: 'Cancela una solicitud de vacaciones por ID.',
+                method: 'PUT',
+                url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/cancelar',
+                fields: [
+                    { id: 'idSolicitud', type: 'text', label: 'ID de Solicitud', value: '' }
+                ]
+            },
+            {
+                title: 'Solicitar días por matrimonio',
+                description: 'Solicita días de vacaciones por matrimonio.',
+                method: 'POST',
+                url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/matrimonio/{fechaMatrimonio}',
+                fields: [
+                    { id: 'fechaMatrimonio', type: 'date', label: 'Fecha de Matrimonio', value: '' }
+                ]
+            },
+            {
+                title: 'Solicitar días por nacimiento',
+                description: 'Solicita días de vacaciones por nacimiento de hijo.',
+                method: 'POST',
+                url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/nacimiento/{fechaNacimiento}',
+                fields: [
+                    { id: 'fechaNacimiento', type: 'date', label: 'Fecha de Nacimiento', value: '' }
+                ]
+            },
+            {
+                title: 'Autorizar solicitud',
+                description: 'Autoriza una solicitud de vacaciones por ID.',
+                method: 'PUT',
+                url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/autorizar',
+                fields: [
+                    { id: 'idSolicitud', type: 'text', label: 'ID de Solicitud', value: '' }
+                ]
+            },
+            {
+                title: 'Rechazar solicitud',
+                description: 'Rechaza una solicitud de vacaciones por ID.',
+                method: 'PUT',
+                url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/rechazar',
+                fields: [
+                    { id: 'idSolicitud', type: 'text', label: 'ID de Solicitud', value: '' }
+                ]
+            },
+            {
+                title: 'Obtener periodos de recibo',
+                description: 'Consulta los periodos de recibo disponibles.',
+                method: 'GET',
+                url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/recibo/periodos',
+                fields: []
+            },
+            {
+                title: 'Enviar prueba de correo',
+                description: 'Envía una prueba de correo electrónico.',
+                method: 'PUT',
+                url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/pruebacorreo',
+                fields: []
+            }
+        ];
+
+        // Crear una tarjeta Adaptive Card para cada acción
+        const cards = actions.map(action => {
+            // Construir los inputs para la tarjeta
+            const inputs = action.fields.map(field => {
+                if (field.type === 'text') {
+                    return {
+                        type: 'Input.Text',
+                        id: field.id,
+                        placeholder: field.label,
+                        value: field.value || ''
+                    };
+                } else if (field.type === 'date') {
+                    return {
+                        type: 'Input.Date',
+                        id: field.id,
+                        placeholder: field.label,
+                        value: field.value || ''
+                    };
+                } else if (field.type === 'choice') {
+                    return {
+                        type: 'Input.ChoiceSet',
+                        id: field.id,
+                        style: 'compact',
+                        value: field.value,
+                        choices: field.choices.map(choice => ({
+                            title: choice,
+                            value: choice
+                        }))
+                    };
+                }
+                return null;
+            }).filter(Boolean);
+
+            // Botón de acción
+            const actionButton = {
+                type: 'Action.Submit',
+                title: 'Ejecutar',
+                data: {
+                    action: action.title,
+                    method: action.method,
+                    url: action.url
+                }
+            };
+
+            // Estructura de la tarjeta
+            const card = {
+                type: 'AdaptiveCard',
+                $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+                version: '1.4',
+                body: [
+                    { type: 'TextBlock', text: action.title, weight: 'Bolder', size: 'Medium' },
+                    { type: 'TextBlock', text: action.description, wrap: true },
+                    ...inputs
+                ],
+                actions: [actionButton]
+            };
+
+            return CardFactory.adaptiveCard(card);
+        });
+
+        // Enviar las tarjetas como un carrusel
+        await context.sendActivity({
+            attachments: cards,
+            attachmentLayout: 'carousel'
+        });
     }
     
     /**
