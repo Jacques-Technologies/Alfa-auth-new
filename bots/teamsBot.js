@@ -1,4 +1,4 @@
-// teamsBot.js - Versión completa y pulida
+// teamsBot.js - Versión corregida y mejorada
 
 const { DialogBot } = require('./dialogBot');
 const { CardFactory } = require('botbuilder');
@@ -101,19 +101,30 @@ class TeamsBot extends DialogBot {
       const authData = await this.authState.get(context, {});
       const isAuthenticated = authData[userId]?.authenticated === true;
 
-      console.log(`TeamsBot: Procesando mensaje de ${userId}: "${text}"`);
+      console.log(`TeamsBot: Procesando mensaje de ${userId}: "${text}" (Autenticado: ${isAuthenticated})`);
 
-      // Determinar tipo de actividad y procesar
-      if (this._isLoginRequest(text, isAuthenticated)) {
+      // Procesar comandos específicos primero
+      if (this._isExplicitLoginCommand(text)) {
         await this._handleLoginRequest(context, userId);
       } else if (context.activity.value) {
         await this._handleCardSubmit(context, context.activity.value);
       } else if (this._isActionsRequest(text)) {
-        await this._sendActionCards(context);
+        if (isAuthenticated) {
+          await this._sendActionCards(context);
+        } else {
+          await context.sendActivity('🔒 Necesitas iniciar sesión primero. Escribe `login` para autenticarte.');
+        }
       } else if (this._isHelpRequest(text)) {
         await this._sendHelpMessage(context);
+      } else if (this._isLogoutRequest(text)) {
+        await this._handleLogoutRequest(context, userId);
       } else {
-        await this.processOpenAIMessage(context, context.activity.text, userId, conversationId);
+        // Mensajes generales - requieren autenticación para OpenAI
+        if (isAuthenticated) {
+          await this.processOpenAIMessage(context, context.activity.text, userId, conversationId);
+        } else {
+          await context.sendActivity('🔒 Necesitas iniciar sesión para usar el asistente de OpenAI. Escribe `login` para autenticarte.');
+        }
       }
 
     } catch (error) {
@@ -125,14 +136,13 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Determina si es una solicitud de login
+   * Determina si es un comando explícito de login
    * @param {string} text - Texto del mensaje
-   * @param {boolean} isAuthenticated - Estado de autenticación
    * @returns {boolean}
    * @private
    */
-  _isLoginRequest(text, isAuthenticated) {
-    return text === 'login' || !isAuthenticated;
+  _isExplicitLoginCommand(text) {
+    return text === 'login' || text === 'iniciar sesion' || text === 'iniciar sesión';
   }
 
   /**
@@ -142,7 +152,7 @@ class TeamsBot extends DialogBot {
    * @private
    */
   _isActionsRequest(text) {
-    return ['acciones', 'menú', 'menu', 'actions'].includes(text);
+    return ['acciones', 'menú', 'menu', 'actions', 'opciones'].includes(text);
   }
 
   /**
@@ -153,6 +163,16 @@ class TeamsBot extends DialogBot {
    */
   _isHelpRequest(text) {
     return ['ayuda', 'help', 'comandos', 'commands'].includes(text);
+  }
+
+  /**
+   * Determina si es una solicitud de logout
+   * @param {string} text - Texto del mensaje
+   * @returns {boolean}
+   * @private
+   */
+  _isLogoutRequest(text) {
+    return ['logout', 'cerrar sesion', 'cerrar sesión', 'salir'].includes(text);
   }
 
   /**
@@ -191,6 +211,32 @@ class TeamsBot extends DialogBot {
   }
 
   /**
+   * Maneja solicitudes de logout
+   * @param {TurnContext} context - Contexto del turno
+   * @param {string} userId - ID del usuario
+   * @private
+   */
+  async _handleLogoutRequest(context, userId) {
+    try {
+      // Limpiar estado de autenticación
+      const authData = await this.authState.get(context, {});
+      if (authData[userId]) {
+        delete authData[userId];
+        await this.authState.set(context, authData);
+        await this.userState.saveChanges(context);
+      }
+
+      // Limpiar memoria
+      this.authenticatedUsers.delete(userId);
+
+      await context.sendActivity('✅ Has cerrado sesión correctamente. Escribe `login` para iniciar sesión nuevamente.');
+    } catch (error) {
+      console.error('Error en logout:', error);
+      await context.sendActivity('❌ Error al cerrar sesión. Intenta nuevamente.');
+    }
+  }
+
+  /**
    * Envía mensaje de ayuda con comandos disponibles
    * @param {TurnContext} context - Contexto del turno
    * @private
@@ -200,12 +246,12 @@ class TeamsBot extends DialogBot {
 🤖 **Comandos disponibles**:
 
 • \`login\` - Iniciar sesión con OAuth
-• \`acciones\` - Ver tarjetas de acciones de API
+• \`acciones\` - Ver tarjetas de acciones de API (requiere autenticación)
 • \`ayuda\` - Mostrar este mensaje
 • \`logout\` - Cerrar sesión
 
 💬 **Uso general**:
-Puedes escribir cualquier pregunta y el asistente de OpenAI te ayudará.
+Una vez autenticado, puedes escribir cualquier pregunta y el asistente de OpenAI te responderá.
 
 🔧 **Acciones de API**:
 Usa el comando \`acciones\` para ver todas las operaciones disponibles con el sistema SIRH.
@@ -221,14 +267,14 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
    */
   async _handleCardSubmit(context, submitData) {
     try {
-      const { action, method, url, token, ...fieldData } = submitData;
+      const { action, method, url, apiToken, ...fieldData } = submitData;
       
       console.log(`TeamsBot: Ejecutando acción "${action}"`);
       console.log('TeamsBot: Datos recibidos:', JSON.stringify(fieldData, null, 2));
 
-      // Validar token requerido
-      if (!this._validateToken(token)) {
-        await context.sendActivity('❌ **Token requerido**: Por favor, ingresa un token de autorización válido.');
+      // Validar token de API requerido (diferente del token OAuth)
+      if (!this._validateApiToken(apiToken)) {
+        await context.sendActivity('❌ **Token de API requerido**: Por favor, ingresa un token de autorización válido para acceder a las APIs.');
         return;
       }
 
@@ -245,7 +291,7 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
       }
 
       // Configurar y ejecutar petición HTTP
-      const response = await this._executeHttpRequest(method, processedUrl, token, remainingData);
+      const response = await this._executeHttpRequest(method, processedUrl, apiToken, remainingData);
       
       // Formatear y enviar respuesta
       const responseMessage = this._formatApiResponse(action, response);
@@ -257,13 +303,13 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
   }
 
   /**
-   * Valida el token de autorización
-   * @param {string} token - Token a validar
+   * Valida el token de API (diferente del token OAuth)
+   * @param {string} apiToken - Token de API a validar
    * @returns {boolean}
    * @private
    */
-  _validateToken(token) {
-    return token && typeof token === 'string' && token.trim().length > 0;
+  _validateApiToken(apiToken) {
+    return apiToken && typeof apiToken === 'string' && apiToken.trim().length > 0;
   }
 
   /**
@@ -408,19 +454,19 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
    * Ejecuta la petición HTTP con la configuración adecuada
    * @param {string} method - Método HTTP
    * @param {string} url - URL procesada
-   * @param {string} token - Token de autorización
+   * @param {string} apiToken - Token de API
    * @param {Object} data - Datos adicionales
    * @returns {Object} - Respuesta de la API
    * @private
    */
-  async _executeHttpRequest(method, url, token, data) {
+  async _executeHttpRequest(method, url, apiToken, data) {
     await this._sendTypingIndicator();
 
     const axiosConfig = {
       method: method.toLowerCase(),
       url: url,
       headers: {
-        'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`,
+        'Authorization': apiToken.startsWith('Bearer ') ? apiToken : `Bearer ${apiToken}`,
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
@@ -577,7 +623,7 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
 
       // Sugerencias basadas en el código de error
       if (status === 401) {
-        errorMessage += '\n💡 **Sugerencia**: Verifica que tu token de autorización sea correcto y esté vigente.';
+        errorMessage += '\n💡 **Sugerencia**: Verifica que tu token de API sea correcto y esté vigente.';
       } else if (status === 403) {
         errorMessage += '\n💡 **Sugerencia**: No tienes permisos suficientes para esta operación.';
       } else if (status === 404) {
@@ -610,13 +656,20 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
     // Crear tarjetas adaptativas
     const cards = this._createAdaptiveCards(actions);
     
-    // Enviar mensaje introductorio y tarjetas
-    await context.sendActivity('📋 **Acciones disponibles**:');
-    await context.sendActivity({
-      attachments: cards,
-      attachmentLayout: 'list'
-    });
-    await context.sendActivity('ℹ️ **Nota**: Necesitarás proporcionar tu token de autorización para usar estas acciones.');
+    // Enviar mensaje introductorio
+    await context.sendActivity('📋 **Acciones de API disponibles**:\n\nSelecciona una acción para ejecutar:');
+    
+    // Enviar tarjetas en grupos para mejor visualización
+    const cardsPerMessage = 3;
+    for (let i = 0; i < cards.length; i += cardsPerMessage) {
+      const cardGroup = cards.slice(i, i + cardsPerMessage);
+      await context.sendActivity({
+        attachments: cardGroup,
+        attachmentLayout: 'carousel'
+      });
+    }
+    
+    await context.sendActivity('ℹ️ **Nota**: Necesitarás proporcionar tu token de API para usar estas acciones (diferente del token de autenticación OAuth).');
   }
 
   /**
@@ -627,22 +680,24 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
   _getAvailableActions() {
     return [
       {
-        title: 'Obtener información del empleado',
-        description: 'Consulta la información básica del empleado autenticado.',
+        title: 'Información del Empleado',
+        description: 'Consulta la información básica del empleado autenticado',
         method: 'GET',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/empleado',
-        fields: []
+        fields: [],
+        icon: '👤'
       },
       {
-        title: 'Obtener solicitudes del empleado',
-        description: 'Consulta todas las solicitudes de vacaciones del empleado.',
+        title: 'Solicitudes de Vacaciones',
+        description: 'Consulta todas las solicitudes de vacaciones del empleado',
         method: 'GET',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/empleado',
-        fields: []
+        fields: [],
+        icon: '🏖️'
       },
       {
-        title: 'Obtener solicitud por ID',
-        description: 'Consulta una solicitud específica por su ID.',
+        title: 'Solicitud por ID',
+        description: 'Consulta una solicitud específica por su ID',
         method: 'GET',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}',
         fields: [
@@ -653,18 +708,20 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
             placeholder: 'Ej: 12345', 
             required: true 
           }
-        ]
+        ],
+        icon: '🔍'
       },
       {
-        title: 'Obtener solicitudes de dependientes',
-        description: 'Consulta las solicitudes de vacaciones de los dependientes.',
+        title: 'Solicitudes de Dependientes',
+        description: 'Consulta las solicitudes de vacaciones de los dependientes',
         method: 'GET',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/dependientes',
-        fields: []
+        fields: [],
+        icon: '👨‍👩‍👧‍👦'
       },
       {
-        title: 'Simular solicitud de vacaciones',
-        description: 'Simula una solicitud de vacaciones para un rango de fechas.',
+        title: 'Simular Solicitud de Vacaciones',
+        description: 'Simula una solicitud de vacaciones para un rango de fechas',
         method: 'POST',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{fechaInicio}/{fechaFin}/{medioDia}/{simular}',
         fields: [
@@ -698,11 +755,12 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
             choices: ['true', 'false'], 
             required: true 
           }
-        ]
+        ],
+        icon: '🎯'
       },
       {
-        title: 'Cancelar solicitud',
-        description: 'Cancela una solicitud de vacaciones por ID.',
+        title: 'Cancelar Solicitud',
+        description: 'Cancela una solicitud de vacaciones por ID',
         method: 'PUT',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/cancelar',
         fields: [
@@ -713,11 +771,12 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
             placeholder: 'Ej: 12345', 
             required: true 
           }
-        ]
+        ],
+        icon: '❌'
       },
       {
-        title: 'Solicitar días por matrimonio',
-        description: 'Solicita días de vacaciones por matrimonio.',
+        title: 'Días por Matrimonio',
+        description: 'Solicita días de vacaciones por matrimonio',
         method: 'POST',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/matrimonio/{fechaMatrimonio}',
         fields: [
@@ -728,11 +787,12 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
             placeholder: 'Ej: 15-08-2025',
             required: true 
           }
-        ]
+        ],
+        icon: '💒'
       },
       {
-        title: 'Solicitar días por nacimiento',
-        description: 'Solicita días de vacaciones por nacimiento de hijo.',
+        title: 'Días por Nacimiento',
+        description: 'Solicita días de vacaciones por nacimiento de hijo',
         method: 'POST',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/nacimiento/{fechaNacimiento}',
         fields: [
@@ -743,11 +803,12 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
             placeholder: 'Ej: 10-07-2025',
             required: true 
           }
-        ]
+        ],
+        icon: '👶'
       },
       {
-        title: 'Autorizar solicitud',
-        description: 'Autoriza una solicitud de vacaciones por ID (requiere permisos de supervisor).',
+        title: 'Autorizar Solicitud',
+        description: 'Autoriza una solicitud de vacaciones (requiere permisos de supervisor)',
         method: 'PUT',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/autorizar',
         fields: [
@@ -758,11 +819,12 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
             placeholder: 'Ej: 12345', 
             required: true 
           }
-        ]
+        ],
+        icon: '✅'
       },
       {
-        title: 'Rechazar solicitud',
-        description: 'Rechaza una solicitud de vacaciones por ID (requiere permisos de supervisor).',
+        title: 'Rechazar Solicitud',
+        description: 'Rechaza una solicitud de vacaciones (requiere permisos de supervisor)',
         method: 'PUT',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/rechazar',
         fields: [
@@ -773,21 +835,16 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
             placeholder: 'Ej: 12345', 
             required: true 
           }
-        ]
+        ],
+        icon: '🚫'
       },
       {
-        title: 'Obtener períodos de recibo',
-        description: 'Consulta los períodos de recibo de nómina disponibles.',
+        title: 'Períodos de Recibo',
+        description: 'Consulta los períodos de recibo de nómina disponibles',
         method: 'GET',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/recibo/periodos',
-        fields: []
-      },
-      {
-        title: 'Enviar prueba de correo',
-        description: 'Envía una prueba de correo electrónico (función de testing).',
-        method: 'PUT',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/pruebacorreo',
-        fields: []
+        fields: [],
+        icon: '📊'
       }
     ];
   }
@@ -803,53 +860,91 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
       // Crear elementos del cuerpo de la tarjeta
       const bodyElements = [
         {
-          type: 'TextBlock',
-          text: action.title,
-          weight: 'Bolder',
-          size: 'Medium',
-          wrap: true,
-          color: 'Accent'
+          type: 'ColumnSet',
+          columns: [
+            {
+              type: 'Column',
+              width: 'auto',
+              items: [{
+                type: 'TextBlock',
+                text: action.icon || '🔧',
+                size: 'Large'
+              }]
+            },
+            {
+              type: 'Column',
+              width: 'stretch',
+              items: [
+                {
+                  type: 'TextBlock',
+                  text: action.title,
+                  weight: 'Bolder',
+                  size: 'Medium',
+                  wrap: true,
+                  color: 'Accent'
+                },
+                {
+                  type: 'TextBlock',
+                  text: action.description,
+                  wrap: true,
+                  spacing: 'Small',
+                  color: 'Default',
+                  isSubtle: true
+                }
+              ]
+            }
+          ]
         },
         {
           type: 'TextBlock',
-          text: action.description,
-          wrap: true,
-          spacing: 'Small',
-          color: 'Default'
+          text: `**Método**: ${action.method}`,
+          spacing: 'Medium',
+          size: 'Small',
+          color: 'Good'
         }
       ];
 
-      // Agregar campo de token (siempre requerido)
+      // Agregar campo de token de API (diferente del OAuth)
       bodyElements.push(
         {
           type: 'TextBlock',
-          text: '🔑 Token de Autorización:',
+          text: '🔑 **Token de API** (requerido):',
           weight: 'Bolder',
-          spacing: 'Medium'
+          spacing: 'Medium',
+          color: 'Attention'
         },
         {
           type: 'Input.Text',
-          id: 'token',
-          placeholder: 'Bearer tu_token_aqui',
+          id: 'apiToken',
+          placeholder: 'Bearer tu_token_de_api_aqui',
           isRequired: true,
           spacing: 'Small'
         }
       );
 
       // Agregar campos específicos de la acción
-      action.fields.forEach(field => {
-        // Agregar etiqueta del campo
+      if (action.fields && action.fields.length > 0) {
         bodyElements.push({
           type: 'TextBlock',
-          text: `${this._getFieldIcon(field.type)} ${field.label}:`,
+          text: '📝 **Parámetros adicionales**:',
           weight: 'Bolder',
           spacing: 'Medium'
         });
 
-        // Agregar input del campo
-        const inputElement = this._createInputElement(field);
-        bodyElements.push(inputElement);
-      });
+        action.fields.forEach(field => {
+          // Agregar etiqueta del campo
+          bodyElements.push({
+            type: 'TextBlock',
+            text: `${this._getFieldIcon(field.type)} ${field.label}${field.required ? ' *' : ''}:`,
+            weight: 'Bolder',
+            spacing: 'Small'
+          });
+
+          // Agregar input del campo
+          const inputElement = this._createInputElement(field);
+          bodyElements.push(inputElement);
+        });
+      }
 
       // Crear la tarjeta adaptativa
       const card = {
@@ -860,12 +955,13 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
         actions: [
           {
             type: 'Action.Submit',
-            title: `▶️ Ejecutar ${action.method}`,
+            title: `${action.icon || '▶️'} Ejecutar ${action.method}`,
             data: {
               action: action.title,
               method: action.method,
               url: action.url
-            }
+            },
+            style: 'positive'
           }
         ]
       };
@@ -949,7 +1045,7 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
           this.activeDialogs.delete(dialogKey);
         }
       } else if (activityName === 'signin/failure') {
-        await context.sendActivity('❌ Error en autenticación. Escribe `login` para intentar de nuevo.');
+        await context.sendActivity('❌ Error en autenticación OAuth. Escribe `login` para intentar de nuevo.');
         this.activeDialogs.delete(dialogKey);
         return { status: 200 };
       }

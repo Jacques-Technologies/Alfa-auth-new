@@ -78,13 +78,13 @@ class OpenAIService {
                 type: "function",
                 function: {
                     name: "referencias",
-                    description: "Devuelve fragmentos de documentos relevantes desde Azure AI Search.",
+                    description: "Busca información en documentos internos de la empresa. Usar solo cuando el usuario pregunta por políticas, procedimientos, manuales o información específica de la empresa.",
                     parameters: {
                         type: "object",
                         properties: {
                             consulta: { 
                                 type: "string", 
-                                description: "Texto de búsqueda" 
+                                description: "Texto de búsqueda específico" 
                             }
                         },
                         required: ["consulta"]
@@ -100,13 +100,13 @@ class OpenAIService {
                     type: "function",
                     function: {
                         name: "comedor",
-                        description: "Consulta el menú del comedor.",
+                        description: "Consulta el menú del comedor para un día específico. Solo usar cuando el usuario pregunta explícitamente por el menú o comida.",
                         parameters: {
                             type: "object",
                             properties: {
                                 filtro_dia: { 
                                     type: "string", 
-                                    description: "Día a consultar" 
+                                    description: "Día a consultar (formato: YYYY-MM-DD o día de la semana)" 
                                 }
                             },
                             required: ["filtro_dia"]
@@ -117,13 +117,13 @@ class OpenAIService {
                     type: "function",
                     function: {
                         name: "informacion_personal",
-                        description: "Datos personales de un empleado.",
+                        description: "Obtiene datos personales de un empleado. Solo usar cuando el usuario específicamente solicita información de un empleado.",
                         parameters: {
                             type: "object",
                             properties: {
                                 email: { 
                                     type: "string", 
-                                    description: "Correo institucional" 
+                                    description: "Correo institucional del empleado" 
                                 }
                             },
                             required: ["email"]
@@ -134,17 +134,17 @@ class OpenAIService {
                     type: "function",
                     function: {
                         name: "directorio",
-                        description: "Búsqueda en directorio.",
+                        description: "Busca empleados en el directorio corporativo. Solo usar cuando el usuario busca contactos o información de empleados.",
                         parameters: {
                             type: "object",
                             properties: {
                                 nombre: { 
                                     type: "string", 
-                                    description: "Nombre" 
+                                    description: "Nombre del empleado" 
                                 },
                                 apellido: { 
                                     type: "string", 
-                                    description: "Apellido" 
+                                    description: "Apellido del empleado" 
                                 }
                             },
                             required: ["nombre", "apellido"]
@@ -161,13 +161,13 @@ class OpenAIService {
                     type: "function",
                     function: {
                         name: "get_incident",
-                        description: "Obtiene un incidente por número.",
+                        description: "Obtiene información de un incidente específico por su número. Solo usar cuando el usuario proporciona un número de incidente específico.",
                         parameters: {
                             type: "object",
                             properties: {
                                 number: { 
                                     type: "string", 
-                                    description: "Número de incidente" 
+                                    description: "Número exacto del incidente" 
                                 }
                             },
                             required: ["number"]
@@ -178,13 +178,13 @@ class OpenAIService {
                     type: "function",
                     function: {
                         name: "get_incident_key_list",
-                        description: "Lista incidentes que cumplen un query.",
+                        description: "Busca incidentes que coincidan con criterios específicos. Solo usar cuando el usuario busca incidentes por descripción o estado.",
                         parameters: {
                             type: "object",
                             properties: {
                                 query: { 
                                     type: "string", 
-                                    description: "Texto de búsqueda" 
+                                    description: "Criterios de búsqueda para incidentes" 
                                 }
                             },
                             required: ["query"]
@@ -195,17 +195,38 @@ class OpenAIService {
                     type: "function",
                     function: {
                         name: "create_incident_by_ci",
-                        description: "Crea un incidente.",
+                        description: "Crea un nuevo incidente en ServiceNow. Solo usar cuando el usuario solicita explícitamente crear un incidente nuevo.",
                         parameters: {
                             type: "object",
                             properties: {
-                                category: { type: "string" },
-                                cmdb_ci: { type: "string" },
-                                company: { type: "string" },
-                                description: { type: "string" },
-                                impact: { type: "string" },
-                                short_description: { type: "string" },
-                                subcategory: { type: "string" }
+                                category: { 
+                                    type: "string",
+                                    description: "Categoría del incidente"
+                                },
+                                cmdb_ci: { 
+                                    type: "string",
+                                    description: "Item de configuración afectado"
+                                },
+                                company: { 
+                                    type: "string",
+                                    description: "Empresa reportante"
+                                },
+                                description: { 
+                                    type: "string",
+                                    description: "Descripción detallada del problema"
+                                },
+                                impact: { 
+                                    type: "string",
+                                    description: "Nivel de impacto del incidente"
+                                },
+                                short_description: { 
+                                    type: "string",
+                                    description: "Resumen breve del problema"
+                                },
+                                subcategory: { 
+                                    type: "string",
+                                    description: "Subcategoría específica"
+                                }
                             },
                             required: [
                                 "category",
@@ -226,6 +247,24 @@ class OpenAIService {
     }
 
     /**
+     * Detecta si el mensaje requiere uso de herramientas específicas
+     * @param {string} mensaje - Mensaje del usuario
+     * @returns {boolean} - Si debe evitar usar herramientas
+     */
+    _shouldAvoidTools(mensaje) {
+        const mensajeLower = mensaje.toLowerCase();
+        
+        // Evitar herramientas para comandos del bot
+        const comandosBot = [
+            'login', 'logout', 'acciones', 'ayuda', 'help', 
+            'token', 'autenticar', 'iniciar sesion', 'cerrar sesion',
+            'commands', 'comandos', 'menu', 'menú', 'opciones'
+        ];
+        
+        return comandosBot.some(comando => mensajeLower.includes(comando));
+    }
+
+    /**
      * Procesa una consulta con el agente de OpenAI
      * @param {string} mensaje - Mensaje del usuario
      * @param {Array} historial - Historial de conversación
@@ -239,6 +278,9 @@ class OpenAIService {
                 return "Lo siento, el servicio de OpenAI no está disponible en este momento. Por favor, contacta al administrador.";
             }
             
+            // Verificar si debemos evitar usar herramientas
+            const evitarHerramientas = this._shouldAvoidTools(mensaje);
+            
             // Convertir historial al formato esperado por OpenAI
             const mensajes = this.formatearHistorial(historial);
             
@@ -248,19 +290,28 @@ class OpenAIService {
                 content: mensaje
             });
 
-            // Crear el agente de OpenAI con las herramientas
-            const response = await this.openai.chat.completions.create({
+            // Configuración para la llamada a OpenAI
+            const requestConfig = {
                 model: "gpt-4-turbo",
                 messages: mensajes,
-                tools: this.tools,
-                tool_choice: "auto"
-            });
+                temperature: 0.7,
+                max_tokens: 1500
+            };
+
+            // Solo agregar herramientas si no debemos evitarlas y hay herramientas disponibles
+            if (!evitarHerramientas && this.tools.length > 0) {
+                requestConfig.tools = this.tools;
+                requestConfig.tool_choice = "auto";
+            }
+
+            // Crear el agente de OpenAI
+            const response = await this.openai.chat.completions.create(requestConfig);
 
             // Obtener respuesta
             const messageResponse = response.choices[0].message;
 
             // Verificar si el agente quiere ejecutar herramientas
-            if (messageResponse.tool_calls) {
+            if (messageResponse.tool_calls && !evitarHerramientas) {
                 // Procesar llamadas a herramientas
                 const toolResults = await this.procesarLlamadasHerramientas(messageResponse.tool_calls);
                 
@@ -274,7 +325,9 @@ class OpenAIService {
                 // Obtener respuesta final
                 const finalResponse = await this.openai.chat.completions.create({
                     model: "gpt-4-turbo",
-                    messages: finalMessages
+                    messages: finalMessages,
+                    temperature: 0.7,
+                    max_tokens: 1500
                 });
 
                 return finalResponse.choices[0].message.content;
@@ -285,7 +338,15 @@ class OpenAIService {
         } catch (error) {
             console.error(`Error al procesar mensaje con OpenAI: ${error.message}`);
             console.error(error.stack);
-            return "Lo siento, hubo un error al procesar tu solicitud. Por favor, inténtalo de nuevo.";
+            
+            // Respuestas más específicas según el tipo de error
+            if (error.code === 'rate_limit_exceeded') {
+                return "He alcanzado el límite de consultas por minuto. Por favor, espera un momento e intenta de nuevo.";
+            } else if (error.code === 'insufficient_quota') {
+                return "El servicio ha alcanzado su límite de uso. Por favor, contacta al administrador.";
+            } else {
+                return "Lo siento, hubo un error al procesar tu solicitud. Por favor, inténtalo de nuevo en unos momentos.";
+            }
         }
     }
 
@@ -295,28 +356,38 @@ class OpenAIService {
      * @returns {Array} - Mensajes en formato OpenAI
      */
     formatearHistorial(historial) {
-        // Mensaje de sistema inicial
+        // Mensaje de sistema inicial con instrucciones más claras
         const mensajes = [{
             role: "system",
-            content: `Eres un asistente inteligente que ayuda a los empleados de Alfa. 
-                     Tienes acceso a diversas herramientas para proporcionar información sobre:
-                     - Menú del comedor
-                     - Directorio de empleados
-                     - Información personal (con autenticación)
-                     - Gestión de incidentes de ServiceNow
-                     - Búsqueda en documentos internos
+            content: `Eres un asistente inteligente que ayuda a los empleados de Alfa Corporation. 
+
+INSTRUCCIONES IMPORTANTES:
+- Si el usuario menciona comandos como "login", "acciones", "ayuda", "token" o similar, NO uses herramientas. Solo responde con información sobre esos comandos.
+- Para preguntas sobre autenticación, tokens o comandos del bot, responde directamente sin usar herramientas.
+- Usa las herramientas SOLO cuando el usuario pregunta específicamente por:
+  * Información de documentos internos o políticas
+  * Menú del comedor 
+  * Directorio de empleados
+  * Incidentes de ServiceNow
+  * Información personal de empleados
+
+SOBRE LAS ACCIONES DE API:
+- Las acciones de API son diferentes de las herramientas que tienes disponible
+- Si el usuario pregunta por "acciones", explica que puede escribir "acciones" para ver las tarjetas interactivas
+- No confundas las acciones de API con tus herramientas internas
+
+Siempre eres amable, profesional y eficiente. Hablas en español y te diriges a los usuarios de manera formal pero cercana.
                      
-                     Siempre eres amable, profesional y eficiente. Hablas en español y te diriges
-                     a los usuarios formalmente. Puedes usar las herramientas disponibles para
-                     responder mejor a las preguntas del usuario.
-                     
-                     Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yyyy')}`
+Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yyyy')}`
         }];
 
-        // Convertir mensajes del historial, si hay alguno
+        // Convertir mensajes del historial, limitando la cantidad para evitar tokens excesivos
         if (historial && historial.length > 0) {
-            historial.forEach(item => {
-                if (item.message) {
+            // Tomar solo los últimos 10 mensajes para evitar exceder límites de tokens
+            const recentHistory = historial.slice(-10);
+            
+            recentHistory.forEach(item => {
+                if (item.message && item.message.trim()) {
                     if (item.type === 'user') {
                         mensajes.push({
                             role: "user",
@@ -357,6 +428,8 @@ class OpenAIService {
                     parsedArgs = {};
                 }
                 
+                console.log(`OpenAI: Ejecutando herramienta ${name} con argumentos:`, parsedArgs);
+                
                 // Ejecutar la herramienta correspondiente
                 const resultado = await this.ejecutarHerramienta(name, parsedArgs);
                 
@@ -364,7 +437,7 @@ class OpenAIService {
                 resultados.push({
                     role: "tool",
                     tool_call_id: id,
-                    content: typeof resultado === 'object' ? JSON.stringify(resultado) : resultado
+                    content: typeof resultado === 'object' ? JSON.stringify(resultado, null, 2) : String(resultado)
                 });
             } catch (error) {
                 console.error(`Error ejecutando herramienta ${name}: ${error.message}`);
@@ -425,8 +498,10 @@ class OpenAIService {
         try {
             // Verificar que el servicio de búsqueda esté disponible
             if (!this.searchAvailable || !this.searchClient) {
-                return "El servicio de búsqueda no está disponible en este momento.";
+                return "El servicio de búsqueda en documentos no está disponible en este momento.";
             }
+            
+            console.log(`Buscando referencias para: "${consulta}"`);
             
             /* 1. Embedding del texto */
             const emb = await this.openai.embeddings.create({
@@ -438,7 +513,7 @@ class OpenAIService {
             /* 2. Consulta vectorial */
             const vectorQuery = {
                 vector: emb.data[0].embedding,
-                kNearestNeighbors: 7,
+                kNearestNeighbors: 5,
                 fields: 'Embedding'
             };
             
@@ -463,30 +538,30 @@ class OpenAIService {
             const results = await this.searchClient.search(undefined, {
                 vectorQueries: [vectorQuery],
                 select: ['Chunk', 'Adicional', 'FileName'],
-                filter: filterFolders
+                filter: filterFolders,
+                top: 5
             });
 
             /* 3. Formatear resultados */
             const chunks = [];
             for await (const r of results) {
                 chunks.push(
-                    `INICIA UN NUEVO EXTRACTO.\n` +
-                    `Nombre del documento: ${r.FileName}\n` +
-                    `Instrucciones adicionales: ${r.Adicional}\n` +
-                    `Contenido: ${r.Chunk}\n` +
-                    `TERMINA EXTRACTO`
+                    `DOCUMENTO: ${r.FileName}\n` +
+                    `CONTENIDO: ${r.Chunk}\n` +
+                    `NOTAS: ${r.Adicional || 'N/A'}\n` +
+                    `---`
                 );
-                if (chunks.length >= 8) break;
+                if (chunks.length >= 5) break;
             }
             
             if (chunks.length === 0) {
-                return "No se encontraron documentos relevantes para esta consulta.";
+                return "No se encontraron documentos relevantes para esta consulta en la base de conocimientos.";
             }
             
-            return chunks.join('\n');
+            return `Encontré ${chunks.length} referencias relevantes:\n\n` + chunks.join('\n');
         } catch (error) {
             console.error(`Error en referencias: ${error.message}`);
-            return `No se pudo realizar la búsqueda en este momento. Error: ${error.message}`;
+            return `No se pudo realizar la búsqueda en documentos. Error: ${error.message}`;
         }
     }
 
@@ -502,15 +577,20 @@ class OpenAIService {
                 return { error: "El servicio de comedor no está configurado" };
             }
             
+            console.log(`Consultando menú del comedor para: ${filtro_dia}`);
+            
             const res = await axios.post(
                 'https://alfa-48373.bubbleapps.io/api/1.1/wf/comedor',
                 { dia: filtro_dia },
-                { headers: { Authorization: `Bearer ${process.env.TOKEN_BUBBLE}` } }
+                { 
+                    headers: { Authorization: `Bearer ${process.env.TOKEN_BUBBLE}` },
+                    timeout: 10000
+                }
             );
             return res.data;
         } catch (error) {
             console.error(`Error en comedor: ${error.message}`);
-            return { error: `Error en comedor: ${error.message}` };
+            return { error: `Error al consultar menú del comedor: ${error.message}` };
         }
     }
 
@@ -526,15 +606,20 @@ class OpenAIService {
                 return { error: "El servicio de información personal no está configurado" };
             }
             
+            console.log(`Consultando información personal para: ${email}`);
+            
             const res = await axios.post(
                 'https://alfa-48373.bubbleapps.io/api/1.1/wf/datos-personales',
                 { email },
-                { headers: { Authorization: `Bearer ${process.env.TOKEN_BUBBLE}` } }
+                { 
+                    headers: { Authorization: `Bearer ${process.env.TOKEN_BUBBLE}` },
+                    timeout: 10000
+                }
             );
             return res.data;
         } catch (error) {
             console.error(`Error en informacion_personal: ${error.message}`);
-            return { error: `Error en informacion_personal: ${error.message}` };
+            return { error: `Error al consultar información personal: ${error.message}` };
         }
     }
 
@@ -551,15 +636,20 @@ class OpenAIService {
                 return { error: "El servicio de directorio no está configurado" };
             }
             
+            console.log(`Buscando en directorio: ${nombre} ${apellido}`);
+            
             const res = await axios.post(
                 'https://alfa-48373.bubbleapps.io/api/1.1/wf/directorio',
                 { Nombre: nombre, Apellido: apellido },
-                { headers: { Authorization: `Bearer ${process.env.TOKEN_BUBBLE}` } }
+                { 
+                    headers: { Authorization: `Bearer ${process.env.TOKEN_BUBBLE}` },
+                    timeout: 10000
+                }
             );
             return res.data;
         } catch (error) {
             console.error(`Error en directorio: ${error.message}`);
-            return { error: `Error en directorio: ${error.message}` };
+            return { error: `Error al buscar en directorio: ${error.message}` };
         }
     }
 
@@ -575,18 +665,21 @@ class OpenAIService {
                 return { error: "El servicio de incidentes no está configurado" };
             }
             
+            console.log(`Consultando incidente: ${number}`);
+            
             const res = await axios.get(
                 'https://api.supporttsmx.com.mx/TSMX/SNOW/Incident/GetIncident',
                 {
                     headers: { Authorization: `Bearer ${process.env.TOKEN_API}` },
                     httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-                    data: { number }
+                    params: { number },
+                    timeout: 15000
                 }
             );
             return res.data;
         } catch (error) {
             console.error(`Error en get_incident: ${error.message}`);
-            return { error: error.message };
+            return { error: `Error al consultar incidente: ${error.message}` };
         }
     }
 
@@ -602,18 +695,21 @@ class OpenAIService {
                 return { error: "El servicio de incidentes no está configurado" };
             }
             
+            console.log(`Buscando incidentes con query: ${query}`);
+            
             const res = await axios.get(
                 'https://api.supporttsmx.com.mx/TSMX/SNOW/Incident/GetIncidentKeyListQuery',
                 {
                     headers: { Authorization: `Bearer ${process.env.TOKEN_API}` },
                     httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-                    data: { query }
+                    params: { query },
+                    timeout: 15000
                 }
             );
             return res.data;
         } catch (error) {
             console.error(`Error en get_incident_key_list: ${error.message}`);
-            return { error: error.message };
+            return { error: `Error al buscar incidentes: ${error.message}` };
         }
     }
 
@@ -629,18 +725,24 @@ class OpenAIService {
                 return { error: "El servicio de incidentes no está configurado" };
             }
             
+            console.log(`Creando incidente con parámetros:`, parametros);
+            
             const res = await axios.post(
                 'https://api.supporttsmx.com.mx/TSMX/SNOW/Incident/CreateIncidentbyCI',
                 parametros,
                 {
-                    headers: { Authorization: `Bearer ${process.env.TOKEN_API}` },
-                    httpsAgent: new https.Agent({ rejectUnauthorized: false })
+                    headers: { 
+                        Authorization: `Bearer ${process.env.TOKEN_API}`,
+                        'Content-Type': 'application/json'
+                    },
+                    httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+                    timeout: 15000
                 }
             );
             return res.data;
         } catch (error) {
             console.error(`Error en create_incident_by_ci: ${error.message}`);
-            return { error: error.message };
+            return { error: `Error al crear incidente: ${error.message}` };
         }
     }
 }

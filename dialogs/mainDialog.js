@@ -27,9 +27,10 @@ class MainDialog extends LogoutDialog {
 
         this.addDialog(new OAuthPrompt(OAUTH_PROMPT, {
             connectionName: connectionName,
-            text: 'Este paso es necesario para autenticarte',
+            text: 'Por favor, inicia sesión para continuar',
             title: 'Iniciar Sesión',
-            timeout: 300000
+            timeout: 300000,
+            endOnInvalidMessage: true
         }));
         
         this.addDialog(new ConfirmPrompt(CONFIRM_PROMPT));
@@ -42,8 +43,8 @@ class MainDialog extends LogoutDialog {
 
         this.initialDialogId = MAIN_WATERFALL_DIALOG;
         
-        // Añadir una propiedad para rastrear diálogos completados
-        this.completedDialogs = new Set();
+        // Conjunto para rastrear usuarios que ya completaron el diálogo
+        this.completedUsers = new Set();
     }
 
     /**
@@ -61,15 +62,25 @@ class MainDialog extends LogoutDialog {
         // Verificar si el usuario ya está autenticado
         const userId = context.activity.from.id;
         const bot = context.turnState.get('bot');
-        const authState = await bot?.authState?.get(context, {});
-        const isAuthenticated = authState[userId]?.authenticated || false;
         
-        // Verificar si este diálogo ya se completó para este usuario
-        const dialogCompleted = this.completedDialogs.has(userId);
+        // Verificar estado de autenticación
+        let isAuthenticated = false;
+        try {
+            const authData = await bot?.authState?.get(context, {});
+            isAuthenticated = authData && authData[userId]?.authenticated === true;
+        } catch (error) {
+            console.warn('Error verificando estado de autenticación:', error.message);
+        }
         
-        // Si el usuario ya está autenticado y este diálogo ya se completó, no iniciar otro
-        if (isAuthenticated && dialogCompleted) {
-            console.log(`Usuario ${userId} ya autenticado y diálogo completado, no iniciando otro`);
+        // Si el usuario ya está autenticado, no iniciar el diálogo
+        if (isAuthenticated) {
+            console.log(`Usuario ${userId} ya está autenticado, no iniciando diálogo de autenticación`);
+            return;
+        }
+        
+        // Verificar si este usuario ya completó el diálogo recientemente
+        if (this.completedUsers.has(userId)) {
+            console.log(`Usuario ${userId} ya completó el diálogo recientemente`);
             return;
         }
         
@@ -83,7 +94,13 @@ class MainDialog extends LogoutDialog {
             console.log('DialogContext vacío, iniciando MainDialog');
             await dialogContext.beginDialog(this.id);
         } else {
-            console.log(`Continuando diálogo existente, estado: ${results.status}`);
+            console.log(`Estado del diálogo: ${results.status}`);
+            
+            // Si el diálogo está completo, marcar al usuario como completado
+            if (results.status === DialogTurnStatus.complete) {
+                this.completedUsers.add(userId);
+                console.log(`Usuario ${userId} completó el diálogo de autenticación`);
+            }
         }
     }
 
@@ -96,17 +113,15 @@ class MainDialog extends LogoutDialog {
         // Verificar si el bot ya está en el contexto
         const bot = context.turnState.get('bot');
         if (!bot) {
-            console.log('No se encontró el bot en el contexto del turno. Verificando si está disponible globalmente...');
+            console.log('Bot no encontrado en el contexto. Verificando instancia global...');
             
             // Intentar usar una referencia global si está disponible
             if (global.botInstance) {
                 console.log('Usando instancia global del bot');
                 context.turnState.set('bot', global.botInstance);
             } else {
-                console.log('No se pudo encontrar una instancia del bot. Esto puede causar problemas con la autenticación.');
+                console.warn('No se pudo encontrar una instancia del bot. Esto puede causar problemas con la autenticación.');
             }
-        } else {
-            console.log('Bot encontrado correctamente en el contexto');
         }
     }
 
@@ -116,7 +131,14 @@ class MainDialog extends LogoutDialog {
      */
     async promptStep(stepContext) {
         console.log('Iniciando promptStep para autenticación OAuth');
-        return await stepContext.beginDialog(OAUTH_PROMPT);
+        
+        try {
+            return await stepContext.beginDialog(OAUTH_PROMPT);
+        } catch (error) {
+            console.error('Error en promptStep:', error);
+            await stepContext.context.sendActivity('❌ Error al iniciar el proceso de autenticación. Por favor, intenta de nuevo.');
+            return await stepContext.endDialog();
+        }
     }
 
     /**
@@ -124,80 +146,129 @@ class MainDialog extends LogoutDialog {
      * @param {WaterfallStepContext} stepContext - The waterfall step context.
      */
     async loginStep(stepContext) {
-        console.log('loginStep ejecutado, respuesta: ', stepContext.result ? 'token obtenido' : 'sin token');
+        console.log('loginStep ejecutado');
         const tokenResponse = stepContext.result;
         const userId = stepContext.context.activity.from.id;
         
-        if (tokenResponse) {
-            // Intentar obtener el bot del contexto
-            const bot = stepContext.context.turnState.get('bot');
-            
-            if (bot) {
-                // Registrar al usuario como autenticado
-                let userData = {
-                    token: tokenResponse.token,
-                    context: stepContext.context,
-                    email: 'usuario@empresa.com',
-                    name: 'Usuario Autenticado'
-                };
-                
-                try {
-                    // Marcar al usuario como autenticado en el bot
-                    await bot.setUserAuthenticated(
-                        userId,
-                        stepContext.context.activity.conversation.id,
-                        userData
-                    );
-                    
-                    // Mensaje de bienvenida al usuario
-                    await stepContext.context.sendActivity('¡Has iniciado sesión exitosamente! Ahora puedes hacer preguntas y el agente de OpenAI te responderá. ¿En qué puedo ayudarte hoy?');
-                    
-                    // Marcar este diálogo como completado para este usuario
-                    this.completedDialogs.add(userId);
-                } catch (error) {
-                    console.error(`Error al procesar autenticación: ${error.message}`);
-                    console.error(error.stack);
-                    await stepContext.context.sendActivity('Ocurrió un error durante la autenticación. Por favor, intenta nuevamente.');
-                }
-            } else {
-                console.error('No se encontró la instancia del bot en el contexto');
-                
-                // Aunque no tengamos el bot, podemos intentar marcar al usuario como autenticado en el estado
-                try {
-                    // Intentar guardar el estado de autenticación directamente
-                    const userState = stepContext.context.turnState.get('UserState');
-                    if (userState) {
-                        const authState = userState.createProperty('AuthState');
-                        const authData = await authState.get(stepContext.context, {});
-                        
-                        authData[userId] = {
-                            authenticated: true,
-                            email: 'usuario@empresa.com',
-                            name: 'Usuario Autenticado',
-                            lastAuthenticated: new Date().toISOString()
-                        };
-                        
-                        await authState.set(stepContext.context, authData);
-                        await userState.saveChanges(stepContext.context);
-                        
-                        await stepContext.context.sendActivity('¡Has iniciado sesión exitosamente! Ahora puedes hacer preguntas y el agente de OpenAI te responderá. ¿En qué puedo ayudarte hoy?');
-                        
-                        // Marcar este diálogo como completado para este usuario
-                        this.completedDialogs.add(userId);
-                    } else {
-                        await stepContext.context.sendActivity('Ocurrió un error en la configuración. Por favor, contacta al administrador.');
-                    }
-                } catch (err) {
-                    console.error(`Error al guardar estado de autenticación: ${err.message}`);
-                    await stepContext.context.sendActivity('Ocurrió un error en la configuración. Por favor, contacta al administrador.');
-                }
-            }
-            
+        if (!tokenResponse || !tokenResponse.token) {
+            console.log('No se recibió token de autenticación');
+            await stepContext.context.sendActivity('❌ No se pudo completar la autenticación. Por favor, intenta escribiendo `login` nuevamente.');
             return await stepContext.endDialog();
         }
         
-        await stepContext.context.sendActivity('No se pudo completar la autenticación. Por favor, intenta escribiendo "login" nuevamente.');
+        console.log('Token de autenticación recibido exitosamente');
+        
+        try {
+            // Intentar obtener el bot del contexto
+            const bot = stepContext.context.turnState.get('bot');
+            
+            if (bot && typeof bot.setUserAuthenticated === 'function') {
+                // Preparar datos de usuario
+                const userData = {
+                    token: tokenResponse.token,
+                    context: stepContext.context,
+                    email: 'usuario@empresa.com', // Esto se puede mejorar obteniendo info del token
+                    name: 'Usuario Autenticado'
+                };
+                
+                // Marcar al usuario como autenticado en el bot
+                const success = await bot.setUserAuthenticated(
+                    userId,
+                    stepContext.context.activity.conversation.id,
+                    userData
+                );
+                
+                if (success) {
+                    // Marcar este usuario como completado
+                    this.completedUsers.add(userId);
+                    
+                    // Mensaje de bienvenida personalizado
+                    const welcomeMessage = `
+✅ **¡Autenticación exitosa!**
+
+🎉 ¡Bienvenido! Ya puedes usar todas las funciones del bot:
+
+💬 **Asistente de OpenAI**: Haz cualquier pregunta y te ayudaré
+🔧 **Acciones de API**: Escribe \`acciones\` para ver las operaciones disponibles
+📚 **Ayuda**: Escribe \`ayuda\` para ver todos los comandos
+
+¿En qué puedo ayudarte hoy?`;
+                    
+                    await stepContext.context.sendActivity(welcomeMessage.trim());
+                } else {
+                    await stepContext.context.sendActivity('❌ Error al procesar la autenticación. Por favor, intenta nuevamente.');
+                }
+            } else {
+                console.error('No se encontró la instancia del bot o el método setUserAuthenticated');
+                
+                // Intentar guardar el estado de autenticación directamente
+                await this._saveAuthenticationState(stepContext, userId, tokenResponse.token);
+                
+                // Marcar como completado
+                this.completedUsers.add(userId);
+                
+                await stepContext.context.sendActivity('✅ ¡Autenticación exitosa! Ya puedes usar el asistente de OpenAI. ¿En qué puedo ayudarte?');
+            }
+            
+        } catch (error) {
+            console.error(`Error al procesar autenticación: ${error.message}`);
+            console.error(error.stack);
+            await stepContext.context.sendActivity('❌ Ocurrió un error durante la autenticación. Por favor, intenta nuevamente escribiendo `login`.');
+        }
+        
         return await stepContext.endDialog();
+    }
+
+    /**
+     * Guarda el estado de autenticación directamente en el UserState
+     * @param {WaterfallStepContext} stepContext - Contexto del paso
+     * @param {string} userId - ID del usuario
+     * @param {string} token - Token de autenticación
+     * @private
+     */
+    async _saveAuthenticationState(stepContext, userId, token) {
+        try {
+            const userState = stepContext.context.turnState.get('UserState');
+            if (userState) {
+                const authState = userState.createProperty('AuthState');
+                const authData = await authState.get(stepContext.context, {});
+                
+                authData[userId] = {
+                    authenticated: true,
+                    email: 'usuario@empresa.com',
+                    name: 'Usuario Autenticado',
+                    token: token,
+                    lastAuthenticated: new Date().toISOString()
+                };
+                
+                await authState.set(stepContext.context, authData);
+                await userState.saveChanges(stepContext.context);
+                
+                console.log(`Estado de autenticación guardado para usuario ${userId}`);
+            } else {
+                console.error('UserState no encontrado en el contexto');
+            }
+        } catch (error) {
+            console.error(`Error al guardar estado de autenticación: ${error.message}`);
+            throw error;
+        }
+    }
+
+    /**
+     * Limpia el estado de usuarios completados (puede ser llamado periódicamente)
+     */
+    clearCompletedUsers() {
+        this.completedUsers.clear();
+        console.log('Lista de usuarios completados limpiada');
+    }
+
+    /**
+     * Verifica si un usuario ya completó el diálogo
+     * @param {string} userId - ID del usuario
+     * @returns {boolean}
+     */
+    hasUserCompleted(userId) {
+        return this.completedUsers.has(userId);
     }
 }
 
