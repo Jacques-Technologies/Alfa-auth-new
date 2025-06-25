@@ -1,4 +1,4 @@
-// teamsBot.js
+// teamsBot.js - Versión corregida para tarjetas dinámicas
 
 const { DialogBot } = require('./dialogBot');
 const { CardFactory } = require('botbuilder');
@@ -12,6 +12,119 @@ const conversationService = require('../services/conversationService');
  * TeamsBot class extends DialogBot to handle Teams-specific activities and OpenAI integration.
  */
 class TeamsBot extends DialogBot {
+  /**
+   * Procesa los campos de fecha para convertirlos al formato ISO
+   * @param {Object} fieldData - Datos de los campos
+   * @returns {Object} - Datos con fechas procesadas
+   */
+  _processDateFields(fieldData) {
+    const processed = { ...fieldData };
+    
+    // Lista de campos que típicamente contienen fechas
+    const dateFields = [
+      'fechaInicio', 'fechaFin', 'fechaMatrimonio', 'fechaNacimiento',
+      'fecha', 'startDate', 'endDate', 'marriageDate', 'birthDate'
+    ];
+    
+    for (const [key, value] of Object.entries(processed)) {
+      // Si el campo contiene "fecha" o "date" en el nombre, o está en la lista
+      const isDateField = key.toLowerCase().includes('fecha') || 
+                         key.toLowerCase().includes('date') || 
+                         dateFields.includes(key);
+      
+      if (isDateField && value && typeof value === 'string') {
+        const convertedDate = this._convertToISODate(value);
+        if (convertedDate) {
+          processed[key] = convertedDate;
+          console.log(`Fecha convertida: ${key} = ${value} -> ${convertedDate}`);
+        }
+      }
+    }
+    
+    return processed;
+  }
+
+  /**
+   * Convierte una fecha en diferentes formatos al formato ISO
+   * @param {string} dateString - Fecha en formato string
+   * @returns {string|null} - Fecha en formato ISO o null si no se puede convertir
+   */
+  _convertToISODate(dateString) {
+    if (!dateString || typeof dateString !== 'string') {
+      return null;
+    }
+
+    // Si ya está en formato ISO, devolverla tal como está
+    if (dateString.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z?$/)) {
+      return dateString.endsWith('Z') ? dateString : dateString + 'Z';
+    }
+
+    // Si es solo una fecha YYYY-MM-DD, agregarle la hora
+    if (dateString.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      return dateString + 'T00:00:00.000Z';
+    }
+
+    let date = null;
+
+    // Intentar diferentes formatos comunes
+    const formats = [
+      // Formato dd-MM-yyyy o dd/MM/yyyy
+      /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/,
+      // Formato yyyy-MM-dd
+      /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/,
+      // Formato MM-dd-yyyy o MM/dd/yyyy
+      /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/
+    ];
+
+    // Formato dd-MM-yyyy o dd/MM/yyyy
+    const ddMMyyyyMatch = dateString.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    if (ddMMyyyyMatch) {
+      const day = ddMMyyyyMatch[1].padStart(2, '0');
+      const month = ddMMyyyyMatch[2].padStart(2, '0');
+      const year = ddMMyyyyMatch[3];
+      
+      // Verificar que el mes y día sean válidos
+      if (parseInt(month) >= 1 && parseInt(month) <= 12 && 
+          parseInt(day) >= 1 && parseInt(day) <= 31) {
+        date = new Date(`${year}-${month}-${day}T00:00:00.000Z`);
+      }
+    }
+
+    // Formato yyyy-MM-dd
+    const yyyyMMddMatch = dateString.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+    if (!date && yyyyMMddMatch) {
+      const year = yyyyMMddMatch[1];
+      const month = yyyyMMddMatch[2].padStart(2, '0');
+      const day = yyyyMMddMatch[3].padStart(2, '0');
+      
+      if (parseInt(month) >= 1 && parseInt(month) <= 12 && 
+          parseInt(day) >= 1 && parseInt(day) <= 31) {
+        date = new Date(`${year}-${month}-${day}T00:00:00.000Z`);
+      }
+    }
+
+    // Si no se pudo parsear con los formatos anteriores, intentar con Date.parse
+    if (!date) {
+      try {
+        date = new Date(dateString);
+        if (isNaN(date.getTime())) {
+          date = null;
+        }
+      } catch (error) {
+        console.warn(`No se pudo convertir la fecha: ${dateString}`);
+        return null;
+      }
+    }
+
+    // Convertir a ISO string si es válida
+    if (date && !isNaN(date.getTime())) {
+      return date.toISOString();
+    }
+
+    console.warn(`No se pudo convertir la fecha: ${dateString}`);
+    return null;
+  }
+
   /**
    * Creates an instance of TeamsBot.
    * @param {ConversationState} conversationState
@@ -90,6 +203,8 @@ class TeamsBot extends DialogBot {
       const authData = await this.authState.get(context, {});
       const isAuthenticated = authData[userId]?.authenticated === true;
 
+      console.log('Procesando mensaje:', { text, isAuthenticated, hasValue: !!context.activity.value });
+
       // 1) Login
       if (text === 'login' || !isAuthenticated) {
         const dialogKey = `auth-${userId}`;
@@ -116,30 +231,9 @@ class TeamsBot extends DialogBot {
         this.activeDialogs.delete(dialogKey);
 
       // 2) Submit de Adaptive Card (acción seleccionada)
-      } else if (context.activity.value && context.activity.value.action) {
-        const { action, method, url, token, ...params } = context.activity.value;
-
-        try {
-          const response = await axios({
-            method: method.toLowerCase(),
-            url,
-            headers: {
-              'Authorization': token,
-              'Content-Type': 'application/json'
-            },
-            params: method.toUpperCase() === 'GET' ? params : undefined,
-            data: method.toUpperCase() === 'GET' ? undefined : params
-          });
-
-          await context.sendActivity(
-            `*${action}* ejecutada exitosamente:\n\`\`\`json\n${JSON.stringify(response.data, null, 2)}\n\`\`\``
-          );
-        } catch (err) {
-          console.error(`Error al ejecutar ${action}:`, err);
-          await context.sendActivity(
-            `Error al ejecutar *${action}*: ${err.response?.data || err.message}`
-          );
-        }
+      } else if (context.activity.value) {
+        console.log('Datos recibidos del submit:', JSON.stringify(context.activity.value, null, 2));
+        await this._handleCardSubmit(context, context.activity.value);
 
       // 3) Mostrar tarjetas de acciones
       } else if (text === 'acciones' || text === 'menú') {
@@ -159,21 +253,154 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Envía un carrusel de Adaptive Cards con un campo de token inyectado
+   * Maneja el submit de las tarjetas adaptativas
+   * @param {TurnContext} context - Contexto del turno
+   * @param {Object} submitData - Datos enviados desde la tarjeta
+   */
+  async _handleCardSubmit(context, submitData) {
+    try {
+      const { action, method, url, token, ...fieldData } = submitData;
+      
+      console.log('Procesando acción:', action);
+      console.log('Método:', method);
+      console.log('URL base:', url);
+      console.log('Datos de campos:', fieldData);
+
+      // Validar que el token esté presente
+      if (!token || token.trim() === '') {
+        await context.sendActivity('❌ Token de autorización requerido. Por favor, ingresa tu token.');
+        return;
+      }
+
+      // Procesar fechas en los datos de campo
+      const processedFieldData = this._processDateFields(fieldData);
+
+      console.log('Datos de campos procesados:', processedFieldData);
+
+      // Procesar la URL reemplazando los placeholders
+      let processedUrl = url;
+      const urlParams = {};
+
+      // Extraer parámetros de la URL (entre llaves) y reemplazarlos
+      const urlPattern = /\{([^}]+)\}/g;
+      let match;
+      const urlParamNames = [];
+      
+      while ((match = urlPattern.exec(url)) !== null) {
+        urlParamNames.push(match[1]);
+      }
+
+      // Reemplazar parámetros en la URL
+      for (const paramName of urlParamNames) {
+        if (processedFieldData[paramName] !== undefined && processedFieldData[paramName] !== '') {
+          processedUrl = processedUrl.replace(`{${paramName}}`, encodeURIComponent(processedFieldData[paramName]));
+          // Remover este parámetro de los datos de campo ya que se usó en la URL
+          delete processedFieldData[paramName];
+        } else {
+          await context.sendActivity(`❌ Falta el parámetro requerido: ${paramName}`);
+          return;
+        }
+      }
+
+      console.log('URL procesada:', processedUrl);
+
+      // Preparar configuración de la petición
+      const axiosConfig = {
+        method: method.toLowerCase(),
+        url: processedUrl,
+        headers: {
+          'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      };
+
+      // Para métodos GET, poner los parámetros restantes en query params
+      // Para otros métodos, poner en el body
+      if (method.toUpperCase() === 'GET') {
+        if (Object.keys(processedFieldData).length > 0) {
+          axiosConfig.params = processedFieldData;
+        }
+      } else {
+        if (Object.keys(processedFieldData).length > 0) {
+          axiosConfig.data = processedFieldData;
+        }
+      }
+
+      console.log('Configuración de axios:', axiosConfig);
+
+      // Realizar la petición
+      await context.sendActivity({ type: 'typing' });
+      
+      const response = await axios(axiosConfig);
+
+      // Formatear y enviar respuesta
+      const responseMessage = this._formatApiResponse(action, response.data);
+      await context.sendActivity(responseMessage);
+
+    } catch (error) {
+      console.error(`Error al ejecutar acción:`, error);
+      
+      let errorMessage = `❌ Error al ejecutar *${submitData.action || 'acción'}*:\n`;
+      
+      if (error.response) {
+        // Error de respuesta HTTP
+        errorMessage += `Código: ${error.response.status}\n`;
+        errorMessage += `Mensaje: ${error.response.data?.message || error.response.statusText || 'Error desconocido'}`;
+        
+        if (error.response.data && typeof error.response.data === 'object') {
+          errorMessage += `\n\`\`\`json\n${JSON.stringify(error.response.data, null, 2)}\n\`\`\``;
+        }
+      } else if (error.request) {
+        // Error de red
+        errorMessage += 'No se pudo conectar con el servidor.';
+      } else {
+        // Otro tipo de error
+        errorMessage += error.message;
+      }
+
+      await context.sendActivity(errorMessage);
+    }
+  }
+
+  /**
+   * Formatea la respuesta de la API para mostrar al usuario
+   * @param {string} action - Nombre de la acción ejecutada
+   * @param {*} data - Datos de respuesta
+   * @returns {string} - Mensaje formateado
+   */
+  _formatApiResponse(action, data) {
+    let message = `✅ *${action}* ejecutada exitosamente:\n\n`;
+    
+    if (typeof data === 'object' && data !== null) {
+      // Si es un objeto, intentar formatear de manera legible
+      if (Array.isArray(data)) {
+        message += `Se encontraron ${data.length} resultados:\n`;
+        message += `\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``;
+      } else {
+        // Objeto simple, mostrar propiedades principales
+        const keys = Object.keys(data);
+        if (keys.length <= 5) {
+          // Pocas propiedades, mostrar directamente
+          for (const key of keys) {
+            message += `**${key}**: ${data[key]}\n`;
+          }
+        } else {
+          // Muchas propiedades, mostrar JSON
+          message += `\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``;
+        }
+      }
+    } else {
+      // Valor simple
+      message += String(data);
+    }
+    
+    return message;
+  }
+
+  /**
+   * Envía un carrusel de Adaptive Cards con acciones disponibles
    */
   async _sendActionCards(context) {
-    const userId = context.activity.from.id;
-    const userData = this.authenticatedUsers.get(userId) || {};
-
-    // Campo token
-    const tokenField = {
-      id: 'token',
-      type: 'text',
-      placeholder: 'Bearer <tu_token>',
-      label: 'Token',
-      value: userData.token || ''
-    };
-
     const actions = [
       {
         title: 'Obtener información del empleado',
@@ -195,7 +422,7 @@ class TeamsBot extends DialogBot {
         method: 'GET',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}',
         fields: [
-          { id: 'idSolicitud', type: 'text', label: 'ID de Solicitud', value: '' }
+          { id: 'idSolicitud', type: 'text', label: 'ID de Solicitud', placeholder: 'Ingresa el ID de la solicitud', required: true }
         ]
       },
       {
@@ -211,10 +438,10 @@ class TeamsBot extends DialogBot {
         method: 'POST',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{fechaInicio}/{fechaFin}/{medioDia}/{simular}',
         fields: [
-          { id: 'fechaInicio', type: 'date', label: 'Fecha inicio', value: '' },
-          { id: 'fechaFin', type: 'date', label: 'Fecha fin', value: '' },
-          { id: 'medioDia', type: 'choice', label: '¿Medio día?', value: 'false', choices: ['true', 'false'] },
-          { id: 'simular', type: 'choice', label: '¿Simular?', value: 'true', choices: ['true', 'false'] }
+          { id: 'fechaInicio', type: 'date', label: 'Fecha inicio', required: true },
+          { id: 'fechaFin', type: 'date', label: 'Fecha fin', required: true },
+          { id: 'medioDia', type: 'choice', label: '¿Medio día?', value: 'false', choices: ['true', 'false'], required: true },
+          { id: 'simular', type: 'choice', label: '¿Simular?', value: 'true', choices: ['true', 'false'], required: true }
         ]
       },
       {
@@ -223,7 +450,7 @@ class TeamsBot extends DialogBot {
         method: 'PUT',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/cancelar',
         fields: [
-          { id: 'idSolicitud', type: 'text', label: 'ID de Solicitud', value: '' }
+          { id: 'idSolicitud', type: 'text', label: 'ID de Solicitud', placeholder: 'Ingresa el ID de la solicitud', required: true }
         ]
       },
       {
@@ -232,7 +459,7 @@ class TeamsBot extends DialogBot {
         method: 'POST',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/matrimonio/{fechaMatrimonio}',
         fields: [
-          { id: 'fechaMatrimonio', type: 'date', label: 'Fecha de Matrimonio', value: '' }
+          { id: 'fechaMatrimonio', type: 'date', label: 'Fecha de Matrimonio', required: true }
         ]
       },
       {
@@ -241,7 +468,7 @@ class TeamsBot extends DialogBot {
         method: 'POST',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/nacimiento/{fechaNacimiento}',
         fields: [
-          { id: 'fechaNacimiento', type: 'date', label: 'Fecha de Nacimiento', value: '' }
+          { id: 'fechaNacimiento', type: 'date', label: 'Fecha de Nacimiento', required: true }
         ]
       },
       {
@@ -250,7 +477,7 @@ class TeamsBot extends DialogBot {
         method: 'PUT',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/autorizar',
         fields: [
-          { id: 'idSolicitud', type: 'text', label: 'ID de Solicitud', value: '' }
+          { id: 'idSolicitud', type: 'text', label: 'ID de Solicitud', placeholder: 'Ingresa el ID de la solicitud', required: true }
         ]
       },
       {
@@ -259,7 +486,7 @@ class TeamsBot extends DialogBot {
         method: 'PUT',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/rechazar',
         fields: [
-          { id: 'idSolicitud', type: 'text', label: 'ID de Solicitud', value: '' }
+          { id: 'idSolicitud', type: 'text', label: 'ID de Solicitud', placeholder: 'Ingresa el ID de la solicitud', required: true }
         ]
       },
       {
@@ -279,44 +506,62 @@ class TeamsBot extends DialogBot {
     ];
 
     const cards = actions.map(action => {
-      const inputs = [tokenField, ...action.fields]
-        .map(field => {
-          switch (field.type) {
-            case 'text':
-              return {
-                type: 'Input.Text',
-                id: field.id,
-                placeholder: field.placeholder || field.label,
-                value: field.value || ''
-              };
-            case 'date':
-              return {
-                type: 'Input.Date',
-                id: field.id,
-                placeholder: field.placeholder || field.label,
-                value: field.value || ''
-              };
-            case 'choice':
-              return {
-                type: 'Input.ChoiceSet',
-                id: field.id,
-                style: 'compact',
-                value: field.value,
-                choices: field.choices.map(c => ({ title: c, value: c }))
-              };
-            default:
-              return null;
-          }
-        })
-        .filter(Boolean);
+      // Crear campos de entrada
+      const inputs = [];
+      
+      // Siempre agregar campo de token
+      inputs.push({
+        type: 'Input.Text',
+        id: 'token',
+        placeholder: 'Bearer tu_token_aqui',
+        label: 'Token de Autorización',
+        isRequired: true
+      });
 
+      // Agregar campos específicos de la acción
+      action.fields.forEach(field => {
+        const input = {
+          type: field.type === 'date' ? 'Input.Date' : 
+                field.type === 'choice' ? 'Input.ChoiceSet' : 'Input.Text',
+          id: field.id,
+          label: field.label,
+          isRequired: field.required || false
+        };
+
+        if (field.placeholder) {
+          input.placeholder = field.placeholder;
+        }
+
+        if (field.type === 'choice' && field.choices) {
+          input.style = 'compact';
+          input.value = field.value || field.choices[0];
+          input.choices = field.choices.map(choice => ({ title: choice, value: choice }));
+        } else if (field.value) {
+          input.value = field.value;
+        }
+
+        inputs.push(input);
+      });
+
+      // Crear la tarjeta
       const card = {
         type: 'AdaptiveCard',
         $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
         version: '1.4',
         body: [
-          { type: 'TextBlock', text: action.title, weight: 'Bolder', size: 'Medium' },
-          { type: 'TextBlock', text: action.description, wrap: true },
+          {
+            type: 'TextBlock',
+            text: action.title,
+            weight: 'Bolder',
+            size: 'Medium',
+            wrap: true
+          },
+          {
+            type: 'TextBlock',
+            text: action.description,
+            wrap: true,
+            color: 'Accent'
+          },
           ...inputs
         ],
         actions: [
@@ -335,10 +580,28 @@ class TeamsBot extends DialogBot {
       return CardFactory.adaptiveCard(card);
     });
 
-    await context.sendActivity({
-      attachments: cards,
-      attachmentLayout: 'carousel'
-    });
+    // Enviar las tarjetas en grupos de 6 para evitar problemas de tamaño
+    const cardGroups = [];
+    for (let i = 0; i < cards.length; i += 6) {
+      cardGroups.push(cards.slice(i, i + 6));
+    }
+
+    for (let i = 0; i < cardGroups.length; i++) {
+      const message = {
+        attachments: cardGroups[i],
+        attachmentLayout: 'carousel'
+      };
+      
+      if (i === 0) {
+        await context.sendActivity('📋 **Acciones disponibles** (Grupo ' + (i + 1) + ' de ' + cardGroups.length + '):');
+      } else {
+        await context.sendActivity('📋 **Más acciones** (Grupo ' + (i + 1) + ' de ' + cardGroups.length + '):');
+      }
+      
+      await context.sendActivity(message);
+    }
+
+    await context.sendActivity('ℹ️ **Nota**: Necesitarás proporcionar tu token de autorización para usar estas acciones.');
   }
 
   /**
