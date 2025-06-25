@@ -78,13 +78,13 @@ class OpenAIService {
                 type: "function",
                 function: {
                     name: "referencias",
-                    description: "Busca información en documentos internos de la empresa. Usar solo cuando el usuario pregunta por políticas, procedimientos, manuales o información específica de la empresa.",
+                    description: "USAR SOLO cuando el usuario pida explícitamente buscar en documentos, políticas específicas, procedimientos detallados o manuales. NO usar para preguntas generales o explicaciones básicas. Ejemplos de uso: 'busca en documentos sobre...', 'necesito la política de...', 'dónde puedo encontrar el procedimiento de...'",
                     parameters: {
                         type: "object",
                         properties: {
                             consulta: { 
                                 type: "string", 
-                                description: "Texto de búsqueda específico" 
+                                description: "Texto específico a buscar en documentos" 
                             }
                         },
                         required: ["consulta"]
@@ -261,7 +261,27 @@ class OpenAIService {
             'commands', 'comandos', 'menu', 'menú', 'opciones'
         ];
         
-        return comandosBot.some(comando => mensajeLower.includes(comando));
+        // Si contiene comandos del bot, evitar herramientas
+        if (comandosBot.some(comando => mensajeLower.includes(comando))) {
+            return true;
+        }
+        
+        // Preguntas generales que no requieren herramientas específicas
+        const preguntasGenerales = [
+            '¿qué es', '¿que es', 'qué es', 'que es',
+            '¿cómo', '¿como', 'cómo', 'como',
+            'explica', 'explicame', 'explícame',
+            'cuéntame', 'cuentame', 'dime sobre',
+            'información sobre', 'informacion sobre'
+        ];
+        
+        // Si es una pregunta general simple, evitar herramientas
+        const esPreguntaGeneral = preguntasGenerales.some(patron => mensajeLower.includes(patron));
+        if (esPreguntaGeneral && mensajeLower.length < 50) {
+            return true;
+        }
+        
+        return false;
     }
 
     /**
@@ -361,22 +381,31 @@ class OpenAIService {
             role: "system",
             content: `Eres un asistente inteligente que ayuda a los empleados de Alfa Corporation. 
 
-INSTRUCCIONES IMPORTANTES:
-- Si el usuario menciona comandos como "login", "acciones", "ayuda", "token" o similar, NO uses herramientas. Solo responde con información sobre esos comandos.
-- Para preguntas sobre autenticación, tokens o comandos del bot, responde directamente sin usar herramientas.
-- Usa las herramientas SOLO cuando el usuario pregunta específicamente por:
-  * Información de documentos internos o políticas
-  * Menú del comedor 
-  * Directorio de empleados
-  * Incidentes de ServiceNow
-  * Información personal de empleados
+INSTRUCCIONES CRÍTICAS SOBRE HERRAMIENTAS:
+- NO uses herramientas para preguntas generales o explicaciones básicas
+- Solo usa herramientas cuando el usuario ESPECÍFICAMENTE pida:
+  * "buscar en documentos" o "buscar información sobre"
+  * "necesito la política de..." o "dónde está el procedimiento de..."
+  * "consultar el menú" o "qué hay de comer"
+  * "buscar empleado" o "información de contacto"
+  * "crear incidente" o "consultar ticket"
 
-SOBRE LAS ACCIONES DE API:
-- Las acciones de API son diferentes de las herramientas que tienes disponible
-- Si el usuario pregunta por "acciones", explica que puede escribir "acciones" para ver las tarjetas interactivas
-- No confundas las acciones de API con tus herramientas internas
+EJEMPLOS - NO usar herramientas:
+- "días por nacimiento" → Explica directamente el proceso
+- "¿cómo solicito vacaciones?" → Da información general
+- "¿qué es el SIRH?" → Explica directamente
 
-Siempre eres amable, profesional y eficiente. Hablas en español y te diriges a los usuarios de manera formal pero cercana.
+EJEMPLOS - SÍ usar herramientas:
+- "busca en documentos la política de vacaciones"
+- "necesito consultar el menú del comedor"
+- "buscar información de Juan Pérez en el directorio"
+
+SOBRE COMANDOS DEL BOT:
+- Si mencionan "login", "acciones", "ayuda", "token": responde directamente
+- Para "acciones": explica que escriban "acciones" para ver tarjetas
+- NO confundas acciones de API con tus herramientas
+
+Siempre responde en español de manera amable y profesional.
                      
 Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yyyy')}`
         }];
@@ -542,16 +571,58 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 top: 5
             });
 
-            /* 3. Formatear resultados */
+            /* 3. Formatear resultados - Método corregido */
             const chunks = [];
-            for await (const r of results) {
-                chunks.push(
-                    `DOCUMENTO: ${r.FileName}\n` +
-                    `CONTENIDO: ${r.Chunk}\n` +
-                    `NOTAS: ${r.Adicional || 'N/A'}\n` +
-                    `---`
-                );
-                if (chunks.length >= 5) break;
+            
+            // Usar el método correcto para iterar sobre resultados de Azure Search
+            const searchResults = await results.results;
+            
+            // Si searchResults es un array, usar for...of normal
+            if (Array.isArray(searchResults)) {
+                for (const result of searchResults) {
+                    const document = result.document;
+                    chunks.push(
+                        `DOCUMENTO: ${document.FileName || 'Sin nombre'}\n` +
+                        `CONTENIDO: ${document.Chunk || 'Sin contenido'}\n` +
+                        `NOTAS: ${document.Adicional || 'N/A'}\n` +
+                        `---`
+                    );
+                    if (chunks.length >= 5) break;
+                }
+            } else {
+                // Si no es un array, intentar iterar como antes pero con manejo de errores
+                try {
+                    for await (const result of results) {
+                        const document = result.document || result;
+                        chunks.push(
+                            `DOCUMENTO: ${document.FileName || 'Sin nombre'}\n` +
+                            `CONTENIDO: ${document.Chunk || 'Sin contenido'}\n` +
+                            `NOTAS: ${document.Adicional || 'N/A'}\n` +
+                            `---`
+                        );
+                        if (chunks.length >= 5) break;
+                    }
+                } catch (iterError) {
+                    console.error('Error iterando resultados de búsqueda:', iterError.message);
+                    
+                    // Intentar método alternativo usando .next()
+                    try {
+                        let result = await results.next();
+                        while (!result.done && chunks.length < 5) {
+                            const document = result.value.document || result.value;
+                            chunks.push(
+                                `DOCUMENTO: ${document.FileName || 'Sin nombre'}\n` +
+                                `CONTENIDO: ${document.Chunk || 'Sin contenido'}\n` +
+                                `NOTAS: ${document.Adicional || 'N/A'}\n` +
+                                `---`
+                            );
+                            result = await results.next();
+                        }
+                    } catch (nextError) {
+                        console.error('Error usando .next():', nextError.message);
+                        return `Error al procesar resultados de búsqueda: ${nextError.message}`;
+                    }
+                }
             }
             
             if (chunks.length === 0) {
@@ -561,6 +632,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             return `Encontré ${chunks.length} referencias relevantes:\n\n` + chunks.join('\n');
         } catch (error) {
             console.error(`Error en referencias: ${error.message}`);
+            console.error('Stack trace:', error.stack);
             return `No se pudo realizar la búsqueda en documentos. Error: ${error.message}`;
         }
     }
