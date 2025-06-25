@@ -515,29 +515,35 @@ class TeamsBot extends DialogBot {
         id: 'token',
         placeholder: 'Bearer tu_token_aqui',
         label: 'Token de Autorización',
-        isRequired: true
+        isRequired: true,
+        spacing: 'Medium'
       });
 
       // Agregar campos específicos de la acción
       action.fields.forEach(field => {
         const input = {
-          type: field.type === 'date' ? 'Input.Date' : 
-                field.type === 'choice' ? 'Input.ChoiceSet' : 'Input.Text',
           id: field.id,
           label: field.label,
-          isRequired: field.required || false
+          isRequired: field.required || false,
+          spacing: 'Small'
         };
 
         if (field.placeholder) {
           input.placeholder = field.placeholder;
         }
 
-        if (field.type === 'choice' && field.choices) {
+        if (field.type === 'date') {
+          input.type = 'Input.Date';
+        } else if (field.type === 'choice' && field.choices) {
+          input.type = 'Input.ChoiceSet';
           input.style = 'compact';
           input.value = field.value || field.choices[0];
           input.choices = field.choices.map(choice => ({ title: choice, value: choice }));
-        } else if (field.value) {
-          input.value = field.value;
+        } else {
+          input.type = 'Input.Text';
+          if (field.value) {
+            input.value = field.value;
+          }
         }
 
         inputs.push(input);
@@ -547,7 +553,7 @@ class TeamsBot extends DialogBot {
       const card = {
         type: 'AdaptiveCard',
         $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
-        version: '1.4',
+        version: '1.3',
         body: [
           {
             type: 'TextBlock',
@@ -560,46 +566,41 @@ class TeamsBot extends DialogBot {
             type: 'TextBlock',
             text: action.description,
             wrap: true,
-            color: 'Accent'
-          },
-          ...inputs
-        ],
-        actions: [
-          {
-            type: 'Action.Submit',
-            title: 'Ejecutar',
-            data: {
-              action: action.title,
-              method: action.method,
-              url: action.url
-            }
+            color: 'Accent',
+            spacing: 'Small'
           }
         ]
       };
 
+      // Agregar inputs al body si existen
+      if (inputs.length > 0) {
+        card.body.push(...inputs);
+      }
+
+      // Agregar acciones
+      card.actions = [
+        {
+          type: 'Action.Submit',
+          title: 'Ejecutar',
+          data: {
+            action: action.title,
+            method: action.method,
+            url: action.url
+          }
+        }
+      ];
+
       return CardFactory.adaptiveCard(card);
     });
 
-    // Enviar las tarjetas en grupos de 6 para evitar problemas de tamaño
-    const cardGroups = [];
-    for (let i = 0; i < cards.length; i += 6) {
-      cardGroups.push(cards.slice(i, i + 6));
-    }
-
-    for (let i = 0; i < cardGroups.length; i++) {
-      const message = {
-        attachments: cardGroups[i],
-        attachmentLayout: 'carousel'
-      };
-      
-      if (i === 0) {
-        await context.sendActivity('📋 **Acciones disponibles** (Grupo ' + (i + 1) + ' de ' + cardGroups.length + '):');
-      } else {
-        await context.sendActivity('📋 **Más acciones** (Grupo ' + (i + 1) + ' de ' + cardGroups.length + '):');
-      }
-      
-      await context.sendActivity(message);
-    }
+    // Enviar mensaje introductorio
+    await context.sendActivity('📋 **Acciones disponibles**:');
+    
+    // Enviar todas las tarjetas en formato de lista
+    await context.sendActivity({
+      attachments: cards,
+      attachmentLayout: 'list'
+    });
 
     await context.sendActivity('ℹ️ **Nota**: Necesitarás proporcionar tu token de autorización para usar estas acciones.');
   }
