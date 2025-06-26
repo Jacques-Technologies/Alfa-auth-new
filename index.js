@@ -1,4 +1,4 @@
-// index.js modernizado con mejor manejo de errores y configuración
+// index.js corregido con mejor manejo de tarjetas adaptativas
 
 // Import required packages
 const path = require('path');
@@ -133,16 +133,37 @@ server.use(function corsHandler(req, res, next) {
     return next();
 });
 
-// Middleware para logging de requests
+// CORREGIDO: Middleware mejorado para logging de requests
 server.use(function requestLogger(req, res, next) {
     const start = Date.now();
     const method = req.method;
     const url = req.url;
     
-    req.on('end', () => {
+    // Log de request entrante
+    console.log(`📡 [${new Date().toISOString()}] ${method} ${url} - Iniciando`);
+    
+    // Log adicional para requests POST (típicamente mensajes del bot)
+    if (method === 'POST' && url === '/api/messages') {
+        if (req.body) {
+            const activityType = req.body.type || 'unknown';
+            const activityName = req.body.name || 'N/A';
+            console.log(`📨 Actividad: ${activityType} (${activityName})`);
+            
+            // Log especial para submits de tarjetas adaptativas
+            if (req.body.value && Object.keys(req.body.value).length > 0) {
+                console.log('🎯 Submit de tarjeta adaptativa detectado');
+                console.log('📋 Datos del submit:', JSON.stringify(req.body.value, null, 2));
+            }
+        }
+    }
+    
+    // Interceptar el final del request para logging
+    const originalEnd = res.end;
+    res.end = function(chunk, encoding) {
         const duration = Date.now() - start;
-        console.log(`📡 ${method} ${url} - ${res.statusCode} (${duration}ms)`);
-    });
+        console.log(`📡 [${new Date().toISOString()}] ${method} ${url} - ${res.statusCode} (${duration}ms)`);
+        originalEnd.call(res, chunk, encoding);
+    };
     
     return next();
 });
@@ -158,7 +179,7 @@ const addBotToTurnState = (req, res, next) => {
     return next();
 };
 
-// Ruta principal para mensajes de bot
+// CORREGIDO: Ruta principal para mensajes de bot con mejor manejo de tarjetas adaptativas
 server.post('/api/messages', addBotToTurnState, async (req, res) => {
     try {
         // Logging detallado de actividades
@@ -173,6 +194,20 @@ server.post('/api/messages', addBotToTurnState, async (req, res) => {
             if (activityType === 'message') {
                 const messageText = body.text ? `"${body.text.substring(0, 50)}${body.text.length > 50 ? '...' : ''}"` : 'sin texto';
                 console.log(`💬 Mensaje: ${messageText}`);
+                
+                // CORREGIDO: Mejor detección de submits de tarjetas adaptativas
+                if (body.value && typeof body.value === 'object' && Object.keys(body.value).length > 0) {
+                    console.log('🎯 Submit de tarjeta adaptativa confirmado');
+                    console.log('📋 Datos completos del submit:', JSON.stringify(body.value, null, 2));
+                    
+                    // Validar que tenemos los campos mínimos necesarios
+                    const { action, method, url } = body.value;
+                    if (action && method && url) {
+                        console.log(`✅ Submit válido para acción: ${action} (${method})`);
+                    } else {
+                        console.warn('⚠️ Submit con datos incompletos:', { action, method, url });
+                    }
+                }
             } else if (activityType === 'invoke') {
                 console.log(`🔧 Invoke: "${activityName}"`);
             } else if (activityType === 'event') {
@@ -183,22 +218,32 @@ server.post('/api/messages', addBotToTurnState, async (req, res) => {
         // Procesar la solicitud con el adaptador
         await adapter.process(req, res, async (context) => {
             try {
+                // CORREGIDO: Asegurar que el contexto tenga toda la información necesaria
+                console.log('🔄 Procesando con adaptador...');
+                console.log('📊 Contexto - Actividad tipo:', context.activity.type);
+                console.log('📊 Contexto - Canal:', context.activity.channelId);
+                
+                // Ejecutar la lógica del bot
                 await bot.run(context);
+                
+                console.log('✅ Procesamiento completado exitosamente');
             } catch (botError) {
                 console.error('❌ Error en bot.run():', botError.message);
+                console.error('📍 Stack trace:', botError.stack);
                 throw botError; // Re-lanzar para que lo maneje el adaptador
             }
         });
         
     } catch (error) {
         console.error('❌ Error crítico al procesar mensaje:', error.message);
-        console.error(error.stack);
+        console.error('📍 Stack trace completo:', error.stack);
         
         // Enviar respuesta de error si aún no se ha enviado
         if (!res.headersSent) {
             res.status(500).json({
                 error: 'Error interno del servidor',
-                message: 'No se pudo procesar la solicitud'
+                message: 'No se pudo procesar la solicitud',
+                timestamp: new Date().toISOString()
             });
         }
     }
@@ -213,9 +258,10 @@ server.get('/public/*', restify.plugins.serveStatic({
     default: 'index.html'
 }));
 
-// Ruta para manejar callback de OAuth
+// CORREGIDO: Ruta para manejar callback de OAuth con mejor HTML
 server.get('/oauthcallback', (req, res, next) => {
     console.log('🔐 Recibida solicitud a /oauthcallback');
+    console.log('🔐 Query params:', req.query);
     
     const htmlContent = `
     <!DOCTYPE html>
@@ -239,34 +285,64 @@ server.get('/oauthcallback', (req, res, next) => {
                     text-align: center; 
                     padding: 2rem;
                     background: rgba(255, 255, 255, 0.1);
-                    border-radius: 10px;
+                    border-radius: 15px;
                     backdrop-filter: blur(10px);
+                    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+                    border: 1px solid rgba(255, 255, 255, 0.18);
+                    max-width: 400px;
                 }
                 .checkmark { 
-                    font-size: 3rem; 
+                    font-size: 4rem; 
                     color: #4CAF50; 
                     margin-bottom: 1rem;
+                    animation: pulse 2s infinite;
                 }
-                h1 { margin: 1rem 0; }
-                p { margin: 0.5rem 0; opacity: 0.9; }
+                @keyframes pulse {
+                    0% { transform: scale(1); }
+                    50% { transform: scale(1.1); }
+                    100% { transform: scale(1); }
+                }
+                h1 { 
+                    margin: 1rem 0; 
+                    font-size: 1.5rem;
+                }
+                p { 
+                    margin: 0.8rem 0; 
+                    opacity: 0.9; 
+                    line-height: 1.4;
+                }
+                .countdown {
+                    font-weight: bold;
+                    color: #4CAF50;
+                }
             </style>
         </head>
         <body>
             <div class="container">
                 <div class="checkmark">✅</div>
                 <h1>¡Autenticación Completada!</h1>
-                <p>Ya puedes cerrar esta ventana y regresar a Microsoft Teams.</p>
+                <p>Ya puedes cerrar esta ventana y regresar a Microsoft Teams o Web Chat.</p>
                 <p>El bot ya está listo para ayudarte.</p>
+                <p class="countdown">Esta ventana se cerrará en <span id="timer">5</span> segundos...</p>
             </div>
             <script>
-                // Cerrar automáticamente después de 3 segundos
-                setTimeout(function() {
-                    try {
-                        window.close();
-                    } catch(e) {
-                        console.log('No se pudo cerrar la ventana automáticamente');
+                let countdown = 5;
+                const timer = document.getElementById('timer');
+                
+                const interval = setInterval(function() {
+                    countdown--;
+                    timer.textContent = countdown;
+                    
+                    if (countdown <= 0) {
+                        clearInterval(interval);
+                        try {
+                            window.close();
+                        } catch(e) {
+                            console.log('No se pudo cerrar la ventana automáticamente');
+                            document.querySelector('.countdown').innerHTML = 'Puedes cerrar esta ventana manualmente.';
+                        }
                     }
-                }, 3000);
+                }, 1000);
             </script>
         </body>
     </html>`;
@@ -281,7 +357,7 @@ server.get('/oauthcallback', (req, res, next) => {
     return next();
 });
 
-// Ruta de salud del servicio
+// CORREGIDO: Ruta de salud del servicio con más información
 server.get('/health', (req, res, next) => {
     const healthStatus = {
         status: 'healthy',
@@ -292,7 +368,19 @@ server.get('/health', (req, res, next) => {
             bot: !!bot,
             openai: !!process.env.OPENAI_API_KEY,
             oauth: !!connectionName,
-            cosmosdb: !!process.env.COSMOSDB_ENDPOINT
+            cosmosdb: !!process.env.COSMOSDB_ENDPOINT,
+            azure_search: !!process.env.SERVICE_ENDPOINT,
+            bubble_api: !!process.env.TOKEN_BUBBLE,
+            snow_api: !!process.env.TOKEN_API
+        },
+        memory: {
+            used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+            total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024)
+        },
+        process: {
+            pid: process.pid,
+            platform: process.platform,
+            nodeVersion: process.version
         }
     };
     
@@ -300,27 +388,71 @@ server.get('/health', (req, res, next) => {
     return next();
 });
 
-// Ruta de información del bot
+// CORREGIDO: Ruta de información del bot más detallada
 server.get('/info', (req, res, next) => {
     const botInfo = {
         name: 'Alfa Bot',
         version: '1.0.0',
         description: 'Bot inteligente para empleados de Alfa Corporation',
         features: [
-            'Asistente de OpenAI',
-            'Acciones de API SIRH',
-            'Autenticación OAuth',
-            'Búsqueda en documentos',
-            'Integración con ServiceNow'
+            'Asistente de OpenAI con herramientas',
+            'Acciones de API SIRH dinámicas',
+            'Autenticación OAuth segura',
+            'Búsqueda en documentos (Azure Search)',
+            'Integración con ServiceNow',
+            'Consulta de menú del comedor',
+            'Directorio de empleados',
+            'Compatible con Teams y Web Chat'
         ],
         endpoints: {
             messages: '/api/messages',
             health: '/health',
-            oauth: '/oauthcallback'
+            oauth: '/oauthcallback',
+            info: '/info'
+        },
+        supportedChannels: [
+            'Microsoft Teams',
+            'Web Chat',
+            'Bot Framework Emulator'
+        ],
+        apis: {
+            sirh: process.env.SIRH_API_URL || 'https://botapiqas-alfacorp.msappproxy.net',
+            openai: !!process.env.OPENAI_API_KEY,
+            azure_search: !!process.env.SERVICE_ENDPOINT,
+            bubble: !!process.env.TOKEN_BUBBLE,
+            servicenow: !!process.env.TOKEN_API
         }
     };
     
     res.json(botInfo);
+    return next();
+});
+
+// NUEVO: Ruta de debug para desarrolladores
+server.get('/debug', (req, res, next) => {
+    if (process.env.NODE_ENV === 'production') {
+        res.status(403).json({ error: 'Debug endpoint not available in production' });
+        return next();
+    }
+    
+    const debugInfo = {
+        environment: process.env.NODE_ENV || 'development',
+        botInstance: !!bot,
+        dialogInstance: !!dialog,
+        envVars: {
+            microsoftAppId: !!process.env.MicrosoftAppId,
+            microsoftAppPassword: !!process.env.MicrosoftAppPassword,
+            oauthConnection: !!connectionName,
+            openaiApiKey: !!process.env.OPENAI_API_KEY,
+            cosmosdbEndpoint: !!process.env.COSMOSDB_ENDPOINT,
+            azureSearchEndpoint: !!process.env.SERVICE_ENDPOINT
+        },
+        memory: process.memoryUsage(),
+        uptime: process.uptime(),
+        versions: process.versions
+    };
+    
+    res.json(debugInfo);
     return next();
 });
 
@@ -337,11 +469,14 @@ server.listen(port, () => {
     console.log('   POST /api/messages   - Mensajes del bot');
     console.log('   GET  /health         - Estado del servicio');
     console.log('   GET  /info           - Información del bot');
+    console.log('   GET  /debug          - Debug (solo desarrollo)');
     console.log('   GET  /oauthcallback  - Callback OAuth');
     console.log('\n🔗 Enlaces útiles:');
     console.log('   Bot Framework Emulator: https://docs.microsoft.com/azure/bot-service/bot-service-debug-emulator');
     console.log('   Teams Developer Portal: https://dev.teams.microsoft.com/');
-    console.log('\n✅ Bot listo para recibir mensajes\n');
+    console.log('\n✅ Bot listo para recibir mensajes');
+    console.log('🎯 Tarjetas adaptativas habilitadas y optimizadas');
+    console.log('🔧 Compatible con Web Chat y Microsoft Teams\n');
 });
 
 // Manejo de señales del sistema

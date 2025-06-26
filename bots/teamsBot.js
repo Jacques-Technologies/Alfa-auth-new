@@ -1,4 +1,4 @@
-// teamsBot.js - Versión corregida y mejorada
+// teamsBot.js - Versión corregida con tarjetas dinámicas funcionales
 
 const { DialogBot } = require('./dialogBot');
 const { CardFactory } = require('botbuilder');
@@ -10,7 +10,7 @@ const conversationService = require('../services/conversationService');
 
 /**
  * TeamsBot class extends DialogBot to handle Teams-specific activities and OpenAI integration.
- * Incluye funcionalidad para tarjetas dinámicas de acciones de API y conversión automática de fechas.
+ * Incluye funcionalidad CORREGIDA para tarjetas dinámicas de acciones de API.
  */
 class TeamsBot extends DialogBot {
   /**
@@ -102,11 +102,15 @@ class TeamsBot extends DialogBot {
       const isAuthenticated = authData[userId]?.authenticated === true;
 
       console.log(`TeamsBot: Procesando mensaje de ${userId}: "${text}" (Autenticado: ${isAuthenticated})`);
+      console.log('TeamsBot: Activity type:', context.activity.type);
+      console.log('TeamsBot: Activity value:', context.activity.value);
 
       // Procesar comandos específicos primero
       if (this._isExplicitLoginCommand(text)) {
         await this._handleLoginRequest(context, userId);
-      } else if (context.activity.value) {
+      } else if (context.activity.value && Object.keys(context.activity.value).length > 0) {
+        // CORREGIDO: Mejor detección de submit de tarjetas
+        console.log('TeamsBot: Detectado submit de tarjeta adaptativa');
         await this._handleCardSubmit(context, context.activity.value);
       } else if (this._isActionsRequest(text)) {
         if (isAuthenticated) {
@@ -260,17 +264,30 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
   }
 
   /**
-   * Maneja el submit de las tarjetas adaptativas con validaciones y procesamiento
+   * CORREGIDO: Maneja el submit de las tarjetas adaptativas
    * @param {TurnContext} context - Contexto del turno
    * @param {Object} submitData - Datos enviados desde la tarjeta
    * @private
    */
   async _handleCardSubmit(context, submitData) {
     try {
+      console.log('TeamsBot: Procesando submit de tarjeta adaptativa');
+      console.log('TeamsBot: Datos completos recibidos:', JSON.stringify(submitData, null, 2));
+
       const { action, method, url, apiToken, ...fieldData } = submitData;
       
-      console.log(`TeamsBot: Ejecutando acción "${action}"`);
-      console.log('TeamsBot: Datos recibidos:', JSON.stringify(fieldData, null, 2));
+      // Validar que tengamos los datos básicos necesarios
+      if (!action || !method || !url) {
+        console.error('TeamsBot: Faltan datos básicos en el submit:', { action, method, url });
+        await context.sendActivity('❌ **Error**: Datos incompletos en la solicitud. Por favor, intenta nuevamente.');
+        return;
+      }
+
+      console.log(`TeamsBot: Ejecutando acción "${action}" con método ${method}`);
+      
+      // Enviar indicador de que se está procesando
+      await context.sendActivity({ type: 'typing' });
+      await context.sendActivity(`⏳ **Ejecutando acción**: ${action}...`);
 
       // Validar token de API requerido (diferente del token OAuth)
       if (!this._validateApiToken(apiToken)) {
@@ -290,6 +307,9 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
         return;
       }
 
+      console.log('TeamsBot: URL procesada:', processedUrl);
+      console.log('TeamsBot: Datos restantes para body:', JSON.stringify(remainingData, null, 2));
+
       // Configurar y ejecutar petición HTTP
       const response = await this._executeHttpRequest(method, processedUrl, apiToken, remainingData);
       
@@ -298,7 +318,7 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
       await context.sendActivity(responseMessage);
 
     } catch (error) {
-      await this._handleApiError(context, error, submitData.action);
+      await this._handleApiError(context, error, submitData.action || 'Desconocida');
     }
   }
 
@@ -460,7 +480,7 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
    * @private
    */
   async _executeHttpRequest(method, url, apiToken, data) {
-    await this._sendTypingIndicator();
+    console.log(`TeamsBot: Ejecutando petición ${method} a ${url}`);
 
     const axiosConfig = {
       method: method.toLowerCase(),
@@ -488,26 +508,13 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
       method: axiosConfig.method,
       url: axiosConfig.url,
       hasData: !!axiosConfig.data,
-      hasParams: !!axiosConfig.params
+      hasParams: !!axiosConfig.params,
+      dataKeys: axiosConfig.data ? Object.keys(axiosConfig.data) : [],
+      paramsKeys: axiosConfig.params ? Object.keys(axiosConfig.params) : []
     });
 
     const response = await axios(axiosConfig);
     return response.data;
-  }
-
-  /**
-   * Envía indicador de escritura para mostrar que el bot está procesando
-   * @private
-   */
-  async _sendTypingIndicator() {
-    // Implementación específica para el contexto actual si está disponible
-    try {
-      if (this.currentContext) {
-        await this.currentContext.sendActivity({ type: 'typing' });
-      }
-    } catch (error) {
-      // Ignorar errores de typing indicator
-    }
   }
 
   /**
@@ -645,31 +652,40 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
   }
 
   /**
-   * Envía un conjunto de tarjetas adaptativas con acciones disponibles
+   * CORREGIDO: Envía un conjunto de tarjetas adaptativas con acciones disponibles
    * @param {TurnContext} context - Contexto del turno
    * @private
    */
   async _sendActionCards(context) {
-    // Definir todas las acciones disponibles
-    const actions = this._getAvailableActions();
-    
-    // Crear tarjetas adaptativas
-    const cards = this._createAdaptiveCards(actions);
-    
-    // Enviar mensaje introductorio
-    await context.sendActivity('📋 **Acciones de API disponibles**:\n\nSelecciona una acción para ejecutar:');
-    
-    // Enviar tarjetas en grupos para mejor visualización
-    const cardsPerMessage = 3;
-    for (let i = 0; i < cards.length; i += cardsPerMessage) {
-      const cardGroup = cards.slice(i, i + cardsPerMessage);
-      await context.sendActivity({
-        attachments: cardGroup,
-        attachmentLayout: 'carousel'
-      });
+    try {
+      // Definir todas las acciones disponibles
+      const actions = this._getAvailableActions();
+      
+      // Crear tarjetas adaptativas (máximo 3 por vez para mejor visualización)
+      const cards = this._createAdaptiveCards(actions);
+      
+      // Enviar mensaje introductorio
+      await context.sendActivity('📋 **Acciones de API disponibles**:\n\nSelecciona una acción para ejecutar:');
+      
+      // Enviar tarjetas en grupos para mejor visualización
+      const cardsPerMessage = 2; // Reducido para mejor visualización
+      for (let i = 0; i < cards.length; i += cardsPerMessage) {
+        const cardGroup = cards.slice(i, i + cardsPerMessage);
+        
+        // Enviar cada tarjeta por separado para mejor compatibilidad
+        for (const card of cardGroup) {
+          await context.sendActivity({ attachments: [card] });
+          // Pequeña pausa entre tarjetas para evitar problemas de rate limiting
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+      
+      await context.sendActivity('ℹ️ **Nota**: Necesitarás proporcionar tu token de API para usar estas acciones (diferente del token de autenticación OAuth).');
+      
+    } catch (error) {
+      console.error('Error enviando tarjetas de acciones:', error);
+      await context.sendActivity('❌ Error al mostrar las acciones disponibles. Por favor, intenta nuevamente.');
     }
-    
-    await context.sendActivity('ℹ️ **Nota**: Necesitarás proporcionar tu token de API para usar estas acciones (diferente del token de autenticación OAuth).');
   }
 
   /**
@@ -696,7 +712,7 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
         icon: '🏖️'
       },
       {
-        title: 'Solicitud por ID',
+        title: 'Consultar Solicitud por ID',
         description: 'Consulta una solicitud específica por su ID',
         method: 'GET',
         url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}',
@@ -729,14 +745,14 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
             id: 'fechaInicio', 
             type: 'date', 
             label: 'Fecha de inicio', 
-            placeholder: 'Ej: 18-06-2025',
+            placeholder: 'Ej: 2025-06-18',
             required: true 
           },
           { 
             id: 'fechaFin', 
             type: 'date', 
             label: 'Fecha de fin', 
-            placeholder: 'Ej: 25-06-2025',
+            placeholder: 'Ej: 2025-06-25',
             required: true 
           },
           { 
@@ -773,84 +789,12 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
           }
         ],
         icon: '❌'
-      },
-      {
-        title: 'Días por Matrimonio',
-        description: 'Solicita días de vacaciones por matrimonio',
-        method: 'POST',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/matrimonio/{fechaMatrimonio}',
-        fields: [
-          { 
-            id: 'fechaMatrimonio', 
-            type: 'date', 
-            label: 'Fecha de matrimonio', 
-            placeholder: 'Ej: 15-08-2025',
-            required: true 
-          }
-        ],
-        icon: '💒'
-      },
-      {
-        title: 'Días por Nacimiento',
-        description: 'Solicita días de vacaciones por nacimiento de hijo',
-        method: 'POST',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/nacimiento/{fechaNacimiento}',
-        fields: [
-          { 
-            id: 'fechaNacimiento', 
-            type: 'date', 
-            label: 'Fecha de nacimiento', 
-            placeholder: 'Ej: 10-07-2025',
-            required: true 
-          }
-        ],
-        icon: '👶'
-      },
-      {
-        title: 'Autorizar Solicitud',
-        description: 'Autoriza una solicitud de vacaciones (requiere permisos de supervisor)',
-        method: 'PUT',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/autorizar',
-        fields: [
-          { 
-            id: 'idSolicitud', 
-            type: 'text', 
-            label: 'ID de Solicitud', 
-            placeholder: 'Ej: 12345', 
-            required: true 
-          }
-        ],
-        icon: '✅'
-      },
-      {
-        title: 'Rechazar Solicitud',
-        description: 'Rechaza una solicitud de vacaciones (requiere permisos de supervisor)',
-        method: 'PUT',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/rechazar',
-        fields: [
-          { 
-            id: 'idSolicitud', 
-            type: 'text', 
-            label: 'ID de Solicitud', 
-            placeholder: 'Ej: 12345', 
-            required: true 
-          }
-        ],
-        icon: '🚫'
-      },
-      {
-        title: 'Períodos de Recibo',
-        description: 'Consulta los períodos de recibo de nómina disponibles',
-        method: 'GET',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/recibo/periodos',
-        fields: [],
-        icon: '📊'
       }
     ];
   }
 
   /**
-   * Crea las tarjetas adaptativas para las acciones
+   * CORREGIDO: Crea las tarjetas adaptativas para las acciones con títulos visibles
    * @param {Array} actions - Lista de acciones
    * @returns {Array} - Lista de tarjetas adaptativas
    * @private
@@ -859,48 +803,47 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
     return actions.map(action => {
       // Crear elementos del cuerpo de la tarjeta
       const bodyElements = [
-        {
-          type: 'ColumnSet',
-          columns: [
-            {
-              type: 'Column',
-              width: 'auto',
-              items: [{
-                type: 'TextBlock',
-                text: action.icon || '🔧',
-                size: 'Large'
-              }]
-            },
-            {
-              type: 'Column',
-              width: 'stretch',
-              items: [
-                {
-                  type: 'TextBlock',
-                  text: action.title,
-                  weight: 'Bolder',
-                  size: 'Medium',
-                  wrap: true,
-                  color: 'Accent'
-                },
-                {
-                  type: 'TextBlock',
-                  text: action.description,
-                  wrap: true,
-                  spacing: 'Small',
-                  color: 'Default',
-                  isSubtle: true
-                }
-              ]
-            }
-          ]
-        },
+        // TÍTULO PRINCIPAL - CORREGIDO para ser más prominente
         {
           type: 'TextBlock',
-          text: `**Método**: ${action.method}`,
-          spacing: 'Medium',
+          text: `${action.icon || '🔧'} ${action.title}`,
+          size: 'Large',
+          weight: 'Bolder',
+          color: 'Accent',
+          wrap: true,
+          horizontalAlignment: 'Center'
+        },
+        // Separador visual
+        {
+          type: 'TextBlock',
+          text: '━━━━━━━━━━━━━━━━━━━━━━━━━━━',
           size: 'Small',
-          color: 'Good'
+          color: 'Accent',
+          horizontalAlignment: 'Center',
+          spacing: 'Small'
+        },
+        // Descripción
+        {
+          type: 'TextBlock',
+          text: action.description,
+          wrap: true,
+          spacing: 'Medium',
+          color: 'Default'
+        },
+        // Información del método
+        {
+          type: 'FactSet',
+          facts: [
+            {
+              title: 'Método:',
+              value: action.method
+            },
+            {
+              title: 'Endpoint:',
+              value: action.url.split('/').pop() || 'API'
+            }
+          ],
+          spacing: 'Medium'
         }
       ];
 
@@ -908,9 +851,9 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
       bodyElements.push(
         {
           type: 'TextBlock',
-          text: '🔑 **Token de API** (requerido):',
+          text: '🔑 Token de API (requerido):',
           weight: 'Bolder',
-          spacing: 'Medium',
+          spacing: 'Large',
           color: 'Attention'
         },
         {
@@ -926,9 +869,9 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
       if (action.fields && action.fields.length > 0) {
         bodyElements.push({
           type: 'TextBlock',
-          text: '📝 **Parámetros adicionales**:',
+          text: '📝 Parámetros adicionales:',
           weight: 'Bolder',
-          spacing: 'Medium'
+          spacing: 'Large'
         });
 
         action.fields.forEach(field => {
@@ -937,7 +880,7 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
             type: 'TextBlock',
             text: `${this._getFieldIcon(field.type)} ${field.label}${field.required ? ' *' : ''}:`,
             weight: 'Bolder',
-            spacing: 'Small'
+            spacing: 'Medium'
           });
 
           // Agregar input del campo
@@ -946,16 +889,16 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
         });
       }
 
-      // Crear la tarjeta adaptativa
+      // Crear la tarjeta adaptativa con estructura corregida
       const card = {
         type: 'AdaptiveCard',
         $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
-        version: '1.2',
+        version: '1.3',
         body: bodyElements,
         actions: [
           {
             type: 'Action.Submit',
-            title: `${action.icon || '▶️'} Ejecutar ${action.method}`,
+            title: `${action.icon || '▶️'} Ejecutar`,
             data: {
               action: action.title,
               method: action.method,
@@ -963,7 +906,14 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
             },
             style: 'positive'
           }
-        ]
+        ],
+        // CORREGIDO: Agregar propiedades para mejor visualización
+        speak: `Acción disponible: ${action.title}. ${action.description}`,
+        backgroundImage: {
+          url: '',
+          fillMode: 'RepeatHorizontally',
+          horizontalAlignment: 'Left'
+        }
       };
 
       return CardFactory.adaptiveCard(card);
