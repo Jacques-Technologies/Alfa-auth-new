@@ -812,6 +812,14 @@ Las acciones usan automáticamente tu token de autenticación OAuth.
         icon: '👤'
       },
       {
+        title: 'Obtener periodos',
+        description: 'Consulta los periodos de vacaciones del empleado',
+        method: 'GET',
+        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/recibo/periodos',
+        fields: [],
+        icon: '📅'
+      },
+      {
         title: 'Solicitudes de Vacaciones',
         description: 'Consulta todas las solicitudes de vacaciones del empleado',
         method: 'GET',
@@ -881,6 +889,70 @@ Las acciones usan automáticamente tu token de autenticación OAuth.
           }
         ],
         icon: '🎯'
+      },
+      {
+        title: 'Solicitar vacaciones por Matrimonio',
+        description: 'Solicita vacaciones por matrimonio con fecha específica',
+        method: 'POST',
+        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/matrimonio/{fechaMatrimonio}',
+        fields: [
+          { 
+            id: 'fechaMatrimonio', 
+            type: 'date', 
+            label: 'Fecha de Matrimonio',
+            placeholder: 'Ej: 2025-06-18',
+            required: true 
+          }
+        ],
+        icon: '💍'
+      },
+      {
+        title: 'Solicitar vacaciones por Nacimiento',
+        description: 'Solicita vacaciones por nacimiento con fecha específica',
+        method: 'POST',
+        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/nacimiento/{fechaNacimiento}',
+        fields: [
+          { 
+            id: 'fechaNacimiento', 
+            type: 'date', 
+            label: 'Fecha de Nacimiento',
+            placeholder: 'Ej: 2025-06-18',
+            required: true 
+          }
+        ],
+        icon: '👶'
+      },
+      {
+        title: 'Autorizar Solicitud',
+        description: 'Autoriza una solicitud de vacaciones por ID',
+        method: 'PUT',
+        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/autorizar',
+        fields: [
+          {
+            id: 'idSolicitud',
+            type: 'text',
+            label: 'ID de Solicitud',
+            placeholder: 'Ej: 12345',
+            required: true
+          }
+        ],
+        icon: '✅'
+      },
+      {
+        title: 'Rechazar Solicitud',
+        description: 'Rechaza una solicitud de vacaciones por ID',
+        method: 'PUT',
+        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/rechazar',
+        fields: [
+          {
+            id: 'idSolicitud',
+            type: 'text',
+            label: 'ID de Solicitud',
+            placeholder: 'Ej: 12345',
+            required: true
+          }
+        ],
+        icon: '❌'
       },
       {
         title: 'Cancelar Solicitud',
