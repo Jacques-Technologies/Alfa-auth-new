@@ -428,11 +428,25 @@ Las acciones usan automáticamente tu token de autenticación OAuth.
       console.log('TeamsBot: Datos restantes para body:', JSON.stringify(remainingData, null, 2));
 
       // Configurar y ejecutar petición HTTP con token OAuth
-      const response = await this._executeHttpRequest(method, processedUrl, oauthToken, remainingData);
-      
-      // Formatear y enviar respuesta
-      const responseMessage = this._formatApiResponse(action, response);
-      await context.sendActivity(responseMessage);
+const response = await this._executeHttpRequest(method, processedUrl, oauthToken, remainingData);
+
+    // Formatear y enviar respuesta usando OpenAI para mejorar estilo
+    const payload = (method.toUpperCase() === 'POST' && response && typeof response === 'object' && response.message)
+      ? response.message
+      : response;
+    let formattedResponse;
+    try {
+      const prompt = `Por favor formatea de manera amigable y con emojis la respuesta de la acción "${action}":\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
+      formattedResponse = await this.openaiService.procesarMensaje(prompt, []);
+    } catch (e) {
+      // Si falla OpenAI, usar formato manual
+      if (typeof payload === 'string') {
+        formattedResponse = `✅ **${action}** ejecutada exitosamente:\n\n${payload}`;
+      } else {
+        formattedResponse = this._formatApiResponse(action, response);
+      }
+    }
+    await context.sendActivity(formattedResponse);
 
     } catch (error) {
       await this._handleApiError(context, error, submitData.action || 'Desconocida');
