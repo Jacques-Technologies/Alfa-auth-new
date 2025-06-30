@@ -1,4 +1,4 @@
-// teamsBot.js - Versión corregida con tarjetas dinámicas funcionales
+// teamsBot.js - Versión corregida con token OAuth automático
 
 const { DialogBot } = require('./dialogBot');
 const { CardFactory } = require('botbuilder');
@@ -10,7 +10,7 @@ const conversationService = require('../services/conversationService');
 
 /**
  * TeamsBot class extends DialogBot to handle Teams-specific activities and OpenAI integration.
- * Incluye funcionalidad CORREGIDA para tarjetas dinámicas de acciones de API.
+ * Incluye funcionalidad CORREGIDA para usar token OAuth automáticamente.
  */
 class TeamsBot extends DialogBot {
   /**
@@ -82,6 +82,111 @@ class TeamsBot extends DialogBot {
       }
     }
     await next();
+  }
+
+  /**
+   * Obtiene el token OAuth del usuario autenticado
+   * @param {TurnContext} context - Contexto del turno
+   * @param {string} userId - ID del usuario
+   * @returns {string|null} - Token OAuth o null si no está disponible
+   * @private
+   */
+  async _getUserOAuthToken(context, userId) {
+    try {
+      // Primero intentar obtener de la memoria
+      const userInfo = this.authenticatedUsers.get(userId);
+      if (userInfo && userInfo.token) {
+        return userInfo.token;
+      }
+
+      // Si no está en memoria, intentar obtener del UserTokenClient
+      const userTokenClient = context.turnState.get(context.adapter.UserTokenClientKey);
+      const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
+      
+      if (userTokenClient && connectionName) {
+        const tokenResponse = await userTokenClient.getUserToken(
+          userId,
+          connectionName,
+          context.activity.channelId
+        );
+        
+        if (tokenResponse && tokenResponse.token) {
+          // Actualizar en memoria
+          if (userInfo) {
+            userInfo.token = tokenResponse.token;
+            this.authenticatedUsers.set(userId, userInfo);
+          }
+          return tokenResponse.token;
+        }
+      }
+
+      // Si no se pudo obtener el token, verificar el estado persistente
+      const authData = await this.authState.get(context, {});
+      if (authData[userId] && authData[userId].token) {
+        return authData[userId].token;
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error obteniendo token OAuth:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Verifica si el token OAuth es válido haciendo una llamada de prueba
+   * @param {string} token - Token OAuth a verificar
+   * @returns {boolean} - Si el token es válido
+   * @private
+   */
+  async _isTokenValid(token) {
+    if (!token) return false;
+    
+    try {
+      // Hacer una llamada simple para verificar el token
+      const response = await axios.get(
+        'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/empleado',
+        {
+          headers: {
+            'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`
+          },
+          timeout: 5000
+        }
+      );
+      
+      return response.status === 200;
+    } catch (error) {
+      if (error.response && error.response.status === 401) {
+        console.log('Token OAuth expirado o inválido');
+        return false;
+      }
+      // Para otros errores, asumimos que el token podría ser válido
+      return true;
+    }
+  }
+
+  /**
+   * Maneja la expiración del token y solicita re-autenticación
+   * @param {TurnContext} context - Contexto del turno
+   * @param {string} userId - ID del usuario
+   * @private
+   */
+  async _handleTokenExpiration(context, userId) {
+    console.log(`Token expirado para usuario ${userId}, solicitando re-autenticación`);
+    
+    // Limpiar estado de autenticación
+    const authData = await this.authState.get(context, {});
+    if (authData[userId]) {
+      delete authData[userId];
+      await this.authState.set(context, authData);
+      await this.userState.saveChanges(context);
+    }
+    
+    // Limpiar memoria
+    this.authenticatedUsers.delete(userId);
+    
+    // Enviar mensaje y solicitar re-autenticación
+    await context.sendActivity('🔐 **Tu sesión ha expirado**\n\nPor favor, escribe `login` para autenticarte nuevamente.');
   }
 
   /**
@@ -259,12 +364,13 @@ Una vez autenticado, puedes escribir cualquier pregunta y el asistente de OpenAI
 
 🔧 **Acciones de API**:
 Usa el comando \`acciones\` para ver todas las operaciones disponibles con el sistema SIRH.
+Las acciones usan automáticamente tu token de autenticación OAuth.
     `;
     await context.sendActivity(helpMessage.trim());
   }
 
   /**
-   * CORREGIDO: Maneja el submit de las tarjetas adaptativas
+   * CORREGIDO: Maneja el submit de las tarjetas adaptativas con token OAuth automático
    * @param {TurnContext} context - Contexto del turno
    * @param {Object} submitData - Datos enviados desde la tarjeta
    * @private
@@ -274,7 +380,8 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
       console.log('TeamsBot: Procesando submit de tarjeta adaptativa');
       console.log('TeamsBot: Datos completos recibidos:', JSON.stringify(submitData, null, 2));
 
-      const { action, method, url, apiToken, ...fieldData } = submitData;
+      const { action, method, url, ...fieldData } = submitData;
+      const userId = context.activity.from.id;
       
       // Validar que tengamos los datos básicos necesarios
       if (!action || !method || !url) {
@@ -289,9 +396,18 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
       await context.sendActivity({ type: 'typing' });
       await context.sendActivity(`⏳ **Ejecutando acción**: ${action}...`);
 
-      // Validar token de API requerido (diferente del token OAuth)
-      if (!this._validateApiToken(apiToken)) {
-        await context.sendActivity('❌ **Token de API requerido**: Por favor, ingresa un token de autorización válido para acceder a las APIs.');
+      // Obtener token OAuth del usuario autenticado
+      const oauthToken = await this._getUserOAuthToken(context, userId);
+      
+      if (!oauthToken) {
+        await this._handleTokenExpiration(context, userId);
+        return;
+      }
+
+      // Verificar si el token es válido
+      const isValid = await this._isTokenValid(oauthToken);
+      if (!isValid) {
+        await this._handleTokenExpiration(context, userId);
         return;
       }
 
@@ -310,8 +426,8 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
       console.log('TeamsBot: URL procesada:', processedUrl);
       console.log('TeamsBot: Datos restantes para body:', JSON.stringify(remainingData, null, 2));
 
-      // Configurar y ejecutar petición HTTP
-      const response = await this._executeHttpRequest(method, processedUrl, apiToken, remainingData);
+      // Configurar y ejecutar petición HTTP con token OAuth
+      const response = await this._executeHttpRequest(method, processedUrl, oauthToken, remainingData);
       
       // Formatear y enviar respuesta
       const responseMessage = this._formatApiResponse(action, response);
@@ -320,16 +436,6 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
     } catch (error) {
       await this._handleApiError(context, error, submitData.action || 'Desconocida');
     }
-  }
-
-  /**
-   * Valida el token de API (diferente del token OAuth)
-   * @param {string} apiToken - Token de API a validar
-   * @returns {boolean}
-   * @private
-   */
-  _validateApiToken(apiToken) {
-    return apiToken && typeof apiToken === 'string' && apiToken.trim().length > 0;
   }
 
   /**
@@ -474,19 +580,19 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
    * Ejecuta la petición HTTP con la configuración adecuada
    * @param {string} method - Método HTTP
    * @param {string} url - URL procesada
-   * @param {string} apiToken - Token de API
+   * @param {string} oauthToken - Token OAuth del usuario
    * @param {Object} data - Datos adicionales
    * @returns {Object} - Respuesta de la API
    * @private
    */
-  async _executeHttpRequest(method, url, apiToken, data) {
+  async _executeHttpRequest(method, url, oauthToken, data) {
     console.log(`TeamsBot: Ejecutando petición ${method} a ${url}`);
 
     const axiosConfig = {
       method: method.toLowerCase(),
       url: url,
       headers: {
-        'Authorization': apiToken.startsWith('Bearer ') ? apiToken : `Bearer ${apiToken}`,
+        'Authorization': oauthToken.startsWith('Bearer ') ? oauthToken : `Bearer ${oauthToken}`,
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
@@ -630,7 +736,9 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
 
       // Sugerencias basadas en el código de error
       if (status === 401) {
-        errorMessage += '\n💡 **Sugerencia**: Verifica que tu token de API sea correcto y esté vigente.';
+        errorMessage += '\n💡 **Sugerencia**: Tu sesión ha expirado. Escribe `login` para autenticarte nuevamente.';
+        // Manejar expiración de token
+        await this._handleTokenExpiration(context, context.activity.from.id);
       } else if (status === 403) {
         errorMessage += '\n💡 **Sugerencia**: No tienes permisos suficientes para esta operación.';
       } else if (status === 404) {
@@ -680,7 +788,7 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
         }
       }
       
-      await context.sendActivity('ℹ️ **Nota**: Necesitarás proporcionar tu token de API para usar estas acciones (diferente del token de autenticación OAuth).');
+      await context.sendActivity('ℹ️ **Nota**: Las acciones usan automáticamente tu token de autenticación OAuth.');
       
     } catch (error) {
       console.error('Error enviando tarjetas de acciones:', error);
@@ -794,7 +902,7 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
   }
 
   /**
-   * CORREGIDO: Crea las tarjetas adaptativas para las acciones con títulos visibles
+   * CORREGIDO: Crea las tarjetas adaptativas sin imagen de fondo
    * @param {Array} actions - Lista de acciones
    * @returns {Array} - Lista de tarjetas adaptativas
    * @private
@@ -803,7 +911,7 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
     return actions.map(action => {
       // Crear elementos del cuerpo de la tarjeta
       const bodyElements = [
-        // TÍTULO PRINCIPAL - CORREGIDO para ser más prominente
+        // TÍTULO PRINCIPAL
         {
           type: 'TextBlock',
           text: `${action.icon || '🔧'} ${action.title}`,
@@ -847,24 +955,6 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
         }
       ];
 
-      // Agregar campo de token de API (diferente del OAuth)
-      bodyElements.push(
-        {
-          type: 'TextBlock',
-          text: '🔑 Token de API (requerido):',
-          weight: 'Bolder',
-          spacing: 'Large',
-          color: 'Attention'
-        },
-        {
-          type: 'Input.Text',
-          id: 'apiToken',
-          placeholder: 'Bearer tu_token_de_api_aqui',
-          isRequired: true,
-          spacing: 'Small'
-        }
-      );
-
       // Agregar campos específicos de la acción
       if (action.fields && action.fields.length > 0) {
         bodyElements.push({
@@ -887,9 +977,18 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
           const inputElement = this._createInputElement(field);
           bodyElements.push(inputElement);
         });
+      } else {
+        // Si no hay campos, agregar nota informativa
+        bodyElements.push({
+          type: 'TextBlock',
+          text: '✅ Esta acción no requiere parámetros adicionales',
+          isSubtle: true,
+          spacing: 'Large',
+          horizontalAlignment: 'Center'
+        });
       }
 
-      // Crear la tarjeta adaptativa con estructura corregida
+      // Crear la tarjeta adaptativa sin imagen de fondo
       const card = {
         type: 'AdaptiveCard',
         $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
@@ -907,13 +1006,7 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
             style: 'positive'
           }
         ],
-        // CORREGIDO: Agregar propiedades para mejor visualización
-        speak: `Acción disponible: ${action.title}. ${action.description}`,
-        backgroundImage: {
-          url: '',
-          fillMode: 'RepeatHorizontally',
-          horizontalAlignment: 'Left'
-        }
+        speak: `Acción disponible: ${action.title}. ${action.description}`
       };
 
       return CardFactory.adaptiveCard(card);
@@ -1016,6 +1109,13 @@ Usa el comando \`acciones\` para ver todas las operaciones disponibles con el si
    */
   async processOpenAIMessage(context, message, userId, conversationId) {
     try {
+      // Verificar token OAuth antes de procesar
+      const oauthToken = await this._getUserOAuthToken(context, userId);
+      if (!oauthToken) {
+        await this._handleTokenExpiration(context, userId);
+        return;
+      }
+
       // Almacenar contexto para typing indicator
       this.currentContext = context;
       
