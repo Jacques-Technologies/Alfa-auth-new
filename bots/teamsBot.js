@@ -1,4 +1,4 @@
-// teamsBot.js - Versión corregida con token OAuth automático
+// teamsBot.js - Versión actualizada con tarjetas dinámicas desde OpenAI
 
 const { DialogBot } = require('./dialogBot');
 const { CardFactory } = require('botbuilder');
@@ -10,7 +10,7 @@ const conversationService = require('../services/conversationService');
 
 /**
  * TeamsBot class extends DialogBot to handle Teams-specific activities and OpenAI integration.
- * Incluye funcionalidad CORREGIDA para usar token OAuth automáticamente.
+ * Ahora incluye manejo de tarjetas dinámicas generadas por OpenAI.
  */
 class TeamsBot extends DialogBot {
   /**
@@ -48,7 +48,10 @@ class TeamsBot extends DialogBot {
     if (!openaiService || typeof openaiService.procesarMensaje !== 'function') {
       console.error('ERROR: openaiService inválido, usando fallback');
       this.openaiService = {
-        procesarMensaje: async msg => `Servicio de OpenAI no disponible. Mensaje: "${msg}"`
+        procesarMensaje: async msg => ({
+          type: 'text',
+          content: `Servicio de OpenAI no disponible. Mensaje: "${msg}"`
+        })
       };
     } else {
       this.openaiService = openaiService;
@@ -78,7 +81,7 @@ class TeamsBot extends DialogBot {
   async handleMembersAdded(context, next) {
     for (const member of context.activity.membersAdded) {
       if (member.id !== context.activity.recipient.id) {
-        await context.sendActivity('👋 **Bienvenido a Alfa Bot**\n\nEscribe `login` para iniciar sesión o `acciones` para ver las acciones disponibles.');
+        await context.sendActivity('👋 **Bienvenido a Alfa Bot**\n\nEscribe `login` para iniciar sesión. Una vez autenticado, puedes:\n\n• Preguntar sobre **vacaciones** y te mostraré las opciones disponibles\n• Consultar tu **información personal**\n• Ver tus **recibos de pago**\n• Buscar en **documentos** de la empresa\n• Y mucho más...\n\n¡Pregúntame cualquier cosa!');
       }
     }
     await next();
@@ -215,25 +218,22 @@ class TeamsBot extends DialogBot {
       if (this._isExplicitLoginCommand(text)) {
         await this._handleLoginRequest(context, userId);
       } else if (context.activity.value && Object.keys(context.activity.value).length > 0) {
-        // CORREGIDO: Mejor detección de submit de tarjetas
+        // Manejo de submit de tarjetas adaptativas
         console.log('TeamsBot: Detectado submit de tarjeta adaptativa');
         await this._handleCardSubmit(context, context.activity.value);
-      } else if (this._isActionsRequest(text)) {
-        if (isAuthenticated) {
-          await this._sendActionCards(context);
-        } else {
-          await context.sendActivity('🔒 Necesitas iniciar sesión primero. Escribe `login` para autenticarte.');
-        }
       } else if (this._isHelpRequest(text)) {
         await this._sendHelpMessage(context);
       } else if (this._isLogoutRequest(text)) {
         await this._handleLogoutRequest(context, userId);
+      } else if (this._isLegacyActionsRequest(text)) {
+        // Comando legacy "acciones" - explicar el nuevo comportamiento
+        await this._handleLegacyActions(context, isAuthenticated);
       } else {
         // Mensajes generales - requieren autenticación para OpenAI
         if (isAuthenticated) {
           await this.processOpenAIMessage(context, context.activity.text, userId, conversationId);
         } else {
-          await context.sendActivity('🔒 Necesitas iniciar sesión para usar el asistente de OpenAI. Escribe `login` para autenticarte.');
+          await context.sendActivity('🔒 Necesitas iniciar sesión para usar el asistente. Escribe `login` para autenticarte.');
         }
       }
 
@@ -256,12 +256,12 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Determina si es una solicitud de acciones
+   * Determina si es una solicitud de acciones legacy
    * @param {string} text - Texto del mensaje
    * @returns {boolean}
    * @private
    */
-  _isActionsRequest(text) {
+  _isLegacyActionsRequest(text) {
     return ['acciones', 'menú', 'menu', 'actions', 'opciones'].includes(text);
   }
 
@@ -347,6 +347,45 @@ class TeamsBot extends DialogBot {
   }
 
   /**
+   * Maneja el comando legacy "acciones"
+   * @param {TurnContext} context - Contexto del turno
+   * @param {boolean} isAuthenticated - Si el usuario está autenticado
+   * @private
+   */
+  async _handleLegacyActions(context, isAuthenticated) {
+    if (!isAuthenticated) {
+      await context.sendActivity('🔒 Necesitas iniciar sesión primero. Escribe `login` para autenticarte.');
+      return;
+    }
+
+    const helpMessage = `
+🎯 **¡Funcionalidad Mejorada!**
+
+Ahora las acciones aparecen automáticamente según lo que necesites. Solo dime qué quieres hacer:
+
+**💬 Ejemplos de lo que puedes preguntar:**
+• "quiero solicitar vacaciones"
+• "ver mis solicitudes de vacaciones" 
+• "mi información personal"
+• "consultar mis recibos"
+• "permiso por matrimonio"
+• "días por nacimiento"
+• "autorizar una solicitud"
+
+**✨ El asistente detectará tu intención y te mostrará exactamente lo que necesitas.**
+
+**🔍 También puedes:**
+• Buscar en documentos: "busca en documentos sobre..."
+• Ver el menú: "qué hay de comer hoy"
+• Buscar empleados: "buscar a Juan Pérez"
+
+¡Pruébalo! Es mucho más intuitivo ahora. 😊
+    `;
+
+    await context.sendActivity(helpMessage.trim());
+  }
+
+  /**
    * Envía mensaje de ayuda con comandos disponibles
    * @param {TurnContext} context - Contexto del turno
    * @private
@@ -355,23 +394,47 @@ class TeamsBot extends DialogBot {
     const helpMessage = `
 🤖 **Comandos disponibles**:
 
+**Autenticación:**
 • \`login\` - Iniciar sesión con OAuth
-• \`acciones\` - Ver tarjetas de acciones de API (requiere autenticación)
-• \`ayuda\` - Mostrar este mensaje
 • \`logout\` - Cerrar sesión
 
-💬 **Uso general**:
-Una vez autenticado, puedes escribir cualquier pregunta y el asistente de OpenAI te responderá.
+**💡 Nuevo Sistema Inteligente:**
+En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
 
-🔧 **Acciones de API**:
-Usa el comando \`acciones\` para ver todas las operaciones disponibles con el sistema SIRH.
-Las acciones usan automáticamente tu token de autenticación OAuth.
-    `;
+**🏖️ Vacaciones:**
+• "quiero solicitar vacaciones"
+• "ver mis vacaciones"
+• "simular una solicitud"
+
+**👤 Información Personal:**
+• "mi información"
+• "mis datos"
+
+**💰 Recibos:**
+• "mis recibos"
+• "periodos de pago"
+
+**🎯 Casos Especiales:**
+• "permiso por matrimonio"
+• "días por nacimiento"
+
+**📋 Gestión (supervisores):**
+• "autorizar solicitud"
+• "rechazar solicitud"
+
+**📚 Otros:**
+• "buscar en documentos sobre..."
+• "menú del comedor"
+• "buscar empleado"
+
+¡Solo dime qué necesitas y te ayudo! 😊
+            `;
+            
     await context.sendActivity(helpMessage.trim());
   }
 
   /**
-   * CORREGIDO: Maneja el submit de las tarjetas adaptativas con token OAuth automático
+   * Maneja el submit de las tarjetas adaptativas con token OAuth automático
    * @param {TurnContext} context - Contexto del turno
    * @param {Object} submitData - Datos enviados desde la tarjeta
    * @private
@@ -428,25 +491,26 @@ Las acciones usan automáticamente tu token de autenticación OAuth.
       console.log('TeamsBot: Datos restantes para body:', JSON.stringify(remainingData, null, 2));
 
       // Configurar y ejecutar petición HTTP con token OAuth
-const response = await this._executeHttpRequest(method, processedUrl, oauthToken, remainingData);
+      const response = await this._executeHttpRequest(method, processedUrl, oauthToken, remainingData);
 
-    // Formatear y enviar respuesta usando OpenAI para mejorar estilo
-    const payload = (method.toUpperCase() === 'POST' && response && typeof response === 'object' && response.message)
-      ? response.message
-      : response;
-    let formattedResponse;
-    try {
-      const prompt = `Por favor formatea de manera amigable y con emojis la respuesta de la acción "${action}":\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
-      formattedResponse = await this.openaiService.procesarMensaje(prompt, []);
-    } catch (e) {
-      // Si falla OpenAI, usar formato manual
-      if (typeof payload === 'string') {
-        formattedResponse = `✅ **${action}** ejecutada exitosamente:\n\n${payload}`;
-      } else {
-        formattedResponse = this._formatApiResponse(action, response);
+      // Formatear y enviar respuesta usando OpenAI para mejorar estilo
+      const payload = (method.toUpperCase() === 'POST' && response && typeof response === 'object' && response.message)
+        ? response.message
+        : response;
+      let formattedResponse;
+      try {
+        const prompt = `Por favor formatea de manera amigable y con emojis la respuesta de la acción "${action}":\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
+        const openaiResponse = await this.openaiService.procesarMensaje(prompt, []);
+        formattedResponse = openaiResponse.type === 'text' ? openaiResponse.content : openaiResponse;
+      } catch (e) {
+        // Si falla OpenAI, usar formato manual
+        if (typeof payload === 'string') {
+          formattedResponse = `✅ **${action}** ejecutada exitosamente:\n\n${payload}`;
+        } else {
+          formattedResponse = this._formatApiResponse(action, response);
+        }
       }
-    }
-    await context.sendActivity(formattedResponse);
+      await context.sendActivity(formattedResponse);
 
     } catch (error) {
       await this._handleApiError(context, error, submitData.action || 'Desconocida');
@@ -775,384 +839,6 @@ const response = await this._executeHttpRequest(method, processedUrl, oauthToken
   }
 
   /**
-   * CORREGIDO: Envía un conjunto de tarjetas adaptativas con acciones disponibles
-   * @param {TurnContext} context - Contexto del turno
-   * @private
-   */
-  async _sendActionCards(context) {
-    try {
-      // Definir todas las acciones disponibles
-      const actions = this._getAvailableActions();
-      
-      // Crear tarjetas adaptativas (máximo 3 por vez para mejor visualización)
-      const cards = this._createAdaptiveCards(actions);
-      
-      // Enviar mensaje introductorio
-      await context.sendActivity('📋 **Acciones de API disponibles**:\n\nSelecciona una acción para ejecutar:');
-      
-      // Enviar tarjetas en grupos para mejor visualización
-      const cardsPerMessage = 2; // Reducido para mejor visualización
-      for (let i = 0; i < cards.length; i += cardsPerMessage) {
-        const cardGroup = cards.slice(i, i + cardsPerMessage);
-        
-        // Enviar cada tarjeta por separado para mejor compatibilidad
-        for (const card of cardGroup) {
-          await context.sendActivity({ attachments: [card] });
-          // Pequeña pausa entre tarjetas para evitar problemas de rate limiting
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-      }
-      
-      await context.sendActivity('ℹ️ **Nota**: Las acciones usan automáticamente tu token de autenticación OAuth.');
-      
-    } catch (error) {
-      console.error('Error enviando tarjetas de acciones:', error);
-      await context.sendActivity('❌ Error al mostrar las acciones disponibles. Por favor, intenta nuevamente.');
-    }
-  }
-
-  /**
-   * Obtiene la lista de acciones disponibles con sus configuraciones
-   * @returns {Array} - Lista de acciones
-   * @private
-   */
-  _getAvailableActions() {
-    return [
-      {
-        title: 'Información del Empleado',
-        description: 'Consulta la información básica del empleado autenticado',
-        method: 'GET',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/empleado',
-        fields: [],
-        icon: '👤'
-      },
-      {
-        title: 'Obtener periodos',
-        description: 'Consulta los periodos de vacaciones del empleado',
-        method: 'GET',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/recibo/periodos',
-        fields: [],
-        icon: '📅'
-      },
-      {
-        title: 'Solicitudes de Vacaciones',
-        description: 'Consulta todas las solicitudes de vacaciones del empleado',
-        method: 'GET',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/empleado',
-        fields: [],
-        icon: '🏖️'
-      },
-      {
-        title: 'Consultar Solicitud por ID',
-        description: 'Consulta una solicitud específica por su ID',
-        method: 'GET',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}',
-        fields: [
-          { 
-            id: 'idSolicitud', 
-            type: 'text', 
-            label: 'ID de Solicitud', 
-            placeholder: 'Ej: 12345', 
-            required: true 
-          }
-        ],
-        icon: '🔍'
-      },
-      {
-        title: 'Solicitudes de Dependientes',
-        description: 'Consulta las solicitudes de vacaciones de los dependientes',
-        method: 'GET',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/dependientes',
-        fields: [],
-        icon: '👨‍👩‍👧‍👦'
-      },
-      {
-        title: 'Simular Solicitud de Vacaciones',
-        description: 'Simula una solicitud de vacaciones para un rango de fechas',
-        method: 'POST',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{fechaInicio}/{fechaFin}/{medioDia}/{simular}',
-        fields: [
-          { 
-            id: 'fechaInicio', 
-            type: 'date', 
-            label: 'Fecha de inicio', 
-            placeholder: 'Ej: 2025-06-18',
-            required: true 
-          },
-          { 
-            id: 'fechaFin', 
-            type: 'date', 
-            label: 'Fecha de fin', 
-            placeholder: 'Ej: 2025-06-25',
-            required: true 
-          },
-          { 
-            id: 'medioDia', 
-            type: 'choice', 
-            label: '¿Medio día?', 
-            value: 'false', 
-            choices: ['true', 'false'], 
-            required: true 
-          },
-          { 
-            id: 'simular', 
-            type: 'choice', 
-            label: '¿Solo simular?', 
-            value: 'true', 
-            choices: ['true', 'false'], 
-            required: true 
-          }
-        ],
-        icon: '🎯'
-      },
-      {
-        title: 'Solicitar vacaciones por Matrimonio',
-        description: 'Solicita vacaciones por matrimonio con fecha específica',
-        method: 'POST',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/matrimonio/{fechaMatrimonio}',
-        fields: [
-          { 
-            id: 'fechaMatrimonio', 
-            type: 'date', 
-            label: 'Fecha de Matrimonio',
-            placeholder: 'Ej: 2025-06-18',
-            required: true 
-          }
-        ],
-        icon: '💍'
-      },
-      {
-        title: 'Solicitar vacaciones por Nacimiento',
-        description: 'Solicita vacaciones por nacimiento con fecha específica',
-        method: 'POST',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/nacimiento/{fechaNacimiento}',
-        fields: [
-          { 
-            id: 'fechaNacimiento', 
-            type: 'date', 
-            label: 'Fecha de Nacimiento',
-            placeholder: 'Ej: 2025-06-18',
-            required: true 
-          }
-        ],
-        icon: '👶'
-      },
-      {
-        title: 'Autorizar Solicitud',
-        description: 'Autoriza una solicitud de vacaciones por ID',
-        method: 'PUT',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/autorizar',
-        fields: [
-          {
-            id: 'idSolicitud',
-            type: 'text',
-            label: 'ID de Solicitud',
-            placeholder: 'Ej: 12345',
-            required: true
-          }
-        ],
-        icon: '✅'
-      },
-      {
-        title: 'Rechazar Solicitud',
-        description: 'Rechaza una solicitud de vacaciones por ID',
-        method: 'PUT',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/rechazar',
-        fields: [
-          {
-            id: 'idSolicitud',
-            type: 'text',
-            label: 'ID de Solicitud',
-            placeholder: 'Ej: 12345',
-            required: true
-          }
-        ],
-        icon: '❌'
-      },
-      {
-        title: 'Cancelar Solicitud',
-        description: 'Cancela una solicitud de vacaciones por ID',
-        method: 'PUT',
-        url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/cancelar',
-        fields: [
-          { 
-            id: 'idSolicitud', 
-            type: 'text', 
-            label: 'ID de Solicitud', 
-            placeholder: 'Ej: 12345', 
-            required: true 
-          }
-        ],
-        icon: '❌'
-      }
-    ];
-  }
-
-  /**
-   * CORREGIDO: Crea las tarjetas adaptativas sin imagen de fondo
-   * @param {Array} actions - Lista de acciones
-   * @returns {Array} - Lista de tarjetas adaptativas
-   * @private
-   */
-  _createAdaptiveCards(actions) {
-    return actions.map(action => {
-      // Crear elementos del cuerpo de la tarjeta
-      const bodyElements = [
-        // TÍTULO PRINCIPAL
-        {
-          type: 'TextBlock',
-          text: `${action.icon || '🔧'} ${action.title}`,
-          size: 'Large',
-          weight: 'Bolder',
-          color: 'Accent',
-          wrap: true,
-          horizontalAlignment: 'Center'
-        },
-        // Separador visual
-        {
-          type: 'TextBlock',
-          text: '━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-          size: 'Small',
-          color: 'Accent',
-          horizontalAlignment: 'Center',
-          spacing: 'Small'
-        },
-        // Descripción
-        {
-          type: 'TextBlock',
-          text: action.description,
-          wrap: true,
-          spacing: 'Medium',
-          color: 'Default'
-        },
-        // Información del método
-        {
-          type: 'FactSet',
-          facts: [
-            {
-              title: 'Método:',
-              value: action.method
-            },
-            {
-              title: 'Endpoint:',
-              value: action.url.split('/').pop() || 'API'
-            }
-          ],
-          spacing: 'Medium'
-        }
-      ];
-
-      // Agregar campos específicos de la acción
-      if (action.fields && action.fields.length > 0) {
-        bodyElements.push({
-          type: 'TextBlock',
-          text: '📝 Parámetros adicionales:',
-          weight: 'Bolder',
-          spacing: 'Large'
-        });
-
-        action.fields.forEach(field => {
-          // Agregar etiqueta del campo
-          bodyElements.push({
-            type: 'TextBlock',
-            text: `${this._getFieldIcon(field.type)} ${field.label}${field.required ? ' *' : ''}:`,
-            weight: 'Bolder',
-            spacing: 'Medium'
-          });
-
-          // Agregar input del campo
-          const inputElement = this._createInputElement(field);
-          bodyElements.push(inputElement);
-        });
-      } else {
-        // Si no hay campos, agregar nota informativa
-        bodyElements.push({
-          type: 'TextBlock',
-          text: '✅ Esta acción no requiere parámetros adicionales',
-          isSubtle: true,
-          spacing: 'Large',
-          horizontalAlignment: 'Center'
-        });
-      }
-
-      // Crear la tarjeta adaptativa sin imagen de fondo
-      const card = {
-        type: 'AdaptiveCard',
-        $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
-        version: '1.3',
-        body: bodyElements,
-        actions: [
-          {
-            type: 'Action.Submit',
-            title: `${action.icon || '▶️'} Ejecutar`,
-            data: {
-              action: action.title,
-              method: action.method,
-              url: action.url
-            },
-            style: 'positive'
-          }
-        ],
-        speak: `Acción disponible: ${action.title}. ${action.description}`
-      };
-
-      return CardFactory.adaptiveCard(card);
-    });
-  }
-
-  /**
-   * Obtiene el icono apropiado para un tipo de campo
-   * @param {string} fieldType - Tipo de campo
-   * @returns {string} - Icono emoji
-   * @private
-   */
-  _getFieldIcon(fieldType) {
-    switch (fieldType) {
-      case 'date': return '📅';
-      case 'choice': return '📝';
-      case 'text': return '✏️';
-      default: return '📄';
-    }
-  }
-
-  /**
-   * Crea un elemento de input para un campo específico
-   * @param {Object} field - Configuración del campo
-   * @returns {Object} - Elemento de input
-   * @private
-   */
-  _createInputElement(field) {
-    const baseInput = {
-      id: field.id,
-      isRequired: field.required || false,
-      spacing: 'Small'
-    };
-
-    if (field.type === 'date') {
-      return {
-        ...baseInput,
-        type: 'Input.Date',
-        placeholder: field.placeholder || field.label
-      };
-    } else if (field.type === 'choice' && field.choices) {
-      return {
-        ...baseInput,
-        type: 'Input.ChoiceSet',
-        style: 'compact',
-        value: field.value || field.choices[0],
-        choices: field.choices.map(choice => ({ title: choice, value: choice }))
-      };
-    } else {
-      return {
-        ...baseInput,
-        type: 'Input.Text',
-        placeholder: field.placeholder || field.label,
-        value: field.value || ''
-      };
-    }
-  }
-
-  /**
    * Maneja actividades invoke (principalmente OAuth)
    * @param {TurnContext} context - Contexto del turno
    * @returns {Object} - Respuesta de la actividad invoke
@@ -1188,7 +874,7 @@ const response = await this._executeHttpRequest(method, processedUrl, oauthToken
   }
 
   /**
-   * Procesa mensajes con el servicio de OpenAI
+   * Procesa mensajes con el servicio de OpenAI (ahora incluye manejo de tarjetas dinámicas)
    * @param {TurnContext} context - Contexto del turno
    * @param {string} message - Mensaje del usuario
    * @param {string} userId - ID del usuario
@@ -1229,19 +915,52 @@ const response = await this._executeHttpRequest(method, processedUrl, oauthToken
         message: item.message
       }));
 
-      // Procesar con OpenAI
+      // Procesar con OpenAI (puede devolver texto o tarjeta)
       const response = await this.openaiService.procesarMensaje(message, formattedHistory);
 
-      // Guardar respuesta del bot
-      try {
-        await this.conversationService.saveMessage(response, conversationId, 'bot');
-        await this.conversationService.updateLastActivity(conversationId);
-      } catch (error) {
-        console.warn('TeamsBot: Error guardando respuesta del bot:', error.message);
-      }
+      // Manejar diferentes tipos de respuesta
+      if (response.type === 'card') {
+        // Respuesta con tarjeta dinámica
+        if (response.content) {
+          await context.sendActivity(response.content);
+        }
+        
+        // Enviar tarjeta(s)
+        if (Array.isArray(response.card)) {
+          // Múltiples tarjetas
+          for (const card of response.card) {
+            await context.sendActivity({ attachments: [card] });
+            // Pequeña pausa entre tarjetas
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        } else {
+          // Tarjeta única
+          await context.sendActivity({ attachments: [response.card] });
+        }
+        
+        // Guardar respuesta del bot (solo el texto, no la tarjeta)
+        try {
+          const botMessage = response.content || 'Tarjeta enviada';
+          await this.conversationService.saveMessage(botMessage, conversationId, 'bot');
+          await this.conversationService.updateLastActivity(conversationId);
+        } catch (error) {
+          console.warn('TeamsBot: Error guardando respuesta del bot:', error.message);
+        }
+      } else {
+        // Respuesta de texto normal
+        const responseContent = response.content || response;
+        
+        // Guardar respuesta del bot
+        try {
+          await this.conversationService.saveMessage(responseContent, conversationId, 'bot');
+          await this.conversationService.updateLastActivity(conversationId);
+        } catch (error) {
+          console.warn('TeamsBot: Error guardando respuesta del bot:', error.message);
+        }
 
-      // Enviar respuesta al usuario
-      await context.sendActivity(response);
+        // Enviar respuesta al usuario
+        await context.sendActivity(responseContent);
+      }
 
     } catch (error) {
       console.error('TeamsBot: Error en processOpenAIMessage:', error);
