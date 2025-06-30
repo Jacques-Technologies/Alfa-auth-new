@@ -102,7 +102,6 @@ class TeamsBot extends DialogBot {
 
       // Si no está en memoria, intentar obtener del UserTokenClient
       const userTokenClient = context.turnState.get(context.adapter.UserTokenClientKey);
-      console.log('TeamsBot: UserTokenClient obtenido:', !!userTokenClient);
       const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
       
       if (userTokenClient && connectionName) {
