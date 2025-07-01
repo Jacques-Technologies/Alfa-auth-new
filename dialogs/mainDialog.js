@@ -212,7 +212,6 @@ class MainDialog extends LogoutDialog {
                 }
             } else {
                 console.warn(`MainDialog: No se recibió token OAuth para usuario ${userId}`);
-                await stepContext.context.sendActivity('❌ **Error de autenticación**\n\nNo se pudo completar el inicio de sesión. Posibles causas:\n\n• Cancelaste el proceso de autenticación\n• Hubo un problema con el servidor de autenticación\n• La sesión expiró\n\n💡 **Solución**: Escribe `login` para intentar nuevamente.');
                 return await stepContext.endDialog();
             }
         } catch (error) {
