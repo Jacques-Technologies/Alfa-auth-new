@@ -2,6 +2,7 @@ const cosmosDbConfig = require('../config/cosmosConfigs');
 
 /**
  * Servicio mejorado para gestionar las conversaciones en CosmosDB o en memoria si no está disponible
+ * CORREGIDO: Manejo de errores de entidades no encontradas y mejor fallback
  */
 class ConversationService {
     constructor() {
@@ -14,6 +15,9 @@ class ConversationService {
             conversations: new Map(),
             messages: []
         };
+        
+        // NUEVO: Cache de conversaciones para evitar errores de entidades no encontradas
+        this.conversationCache = new Map();
         
         // Intentar inicializar CosmosDB
         this.initializeCosmosDb();
@@ -187,7 +191,7 @@ class ConversationService {
     }
 
     /**
-     * Crea un registro de nueva conversación
+     * CORREGIDO: Crea un registro de nueva conversación con mejor manejo de duplicados
      * @param {string} conversationId - ID de la conversación
      * @param {string} userId - ID del usuario
      * @returns {Object} - Registro de conversación
@@ -202,8 +206,16 @@ class ConversationService {
 
         try {
             const timestamp = new Date().toISOString();
+            const conversationRecordId = `conversation-${conversationId}`;
+            
+            // NUEVO: Verificar cache primero para evitar duplicados
+            if (this.conversationCache.has(conversationId)) {
+                console.log(`Conversación ya existe en cache: ${conversationId}`);
+                return this.conversationCache.get(conversationId);
+            }
+            
             const conversationRecord = {
-                id: `conversation-${conversationId}`,
+                id: conversationRecordId,
                 conversationId,
                 userId,
                 startTime: timestamp,
@@ -213,7 +225,7 @@ class ConversationService {
             };
             
             if (this.useCosmosDb && this.container) {
-                // Verificar si ya existe
+                // Verificar si ya existe en CosmosDB
                 try {
                     const existingQuery = {
                         query: "SELECT * FROM c WHERE c.conversationId = @conversationId AND c.type = 'conversation'",
@@ -224,6 +236,7 @@ class ConversationService {
                     
                     if (resources.length > 0) {
                         console.log(`Conversación ya existe en CosmosDB: ${conversationId}`);
+                        this.conversationCache.set(conversationId, resources[0]);
                         return resources[0];
                     }
                 } catch (checkError) {
@@ -231,9 +244,20 @@ class ConversationService {
                 }
                 
                 // Crear nueva conversación
-                const { resource } = await this.container.items.create(conversationRecord);
-                console.log(`Conversación creada en CosmosDB: ${conversationId}`);
-                return resource;
+                try {
+                    const { resource } = await this.container.items.create(conversationRecord);
+                    console.log(`Conversación creada en CosmosDB: ${conversationId}`);
+                    this.conversationCache.set(conversationId, resource);
+                    return resource;
+                } catch (createError) {
+                    if (createError.code === 409) {
+                        // Conflicto - la conversación ya existe
+                        console.log(`Conversación ya existe (conflicto): ${conversationId}`);
+                        this.conversationCache.set(conversationId, conversationRecord);
+                        return conversationRecord;
+                    }
+                    throw createError;
+                }
             } else {
                 // Verificar si ya existe en memoria
                 if (this.memoryStorage.conversations.has(conversationId)) {
@@ -243,6 +267,7 @@ class ConversationService {
                 
                 // Crear en memoria
                 this.memoryStorage.conversations.set(conversationId, conversationRecord);
+                this.conversationCache.set(conversationId, conversationRecord);
                 console.log(`Conversación creada en memoria: ${conversationId}`);
                 return conversationRecord;
             }
@@ -263,7 +288,7 @@ class ConversationService {
     }
 
     /**
-     * Actualiza el tiempo de la última actividad
+     * CORREGIDO: Actualiza el tiempo de la última actividad con mejor manejo de errores
      * @param {string} conversationId - ID de la conversación
      * @returns {Object} - Conversación actualizada
      */
@@ -277,47 +302,69 @@ class ConversationService {
 
         try {
             if (this.useCosmosDb && this.container) {
-                // Actualizar en CosmosDB
-                const querySpec = {
-                    query: "SELECT * FROM c WHERE c.conversationId = @conversationId AND c.type = 'conversation'",
-                    parameters: [
-                        {
-                            name: "@conversationId",
-                            value: conversationId
+                // CORREGIDO: Mejor manejo de actualizaciones en CosmosDB
+                try {
+                    // Primero, intentar encontrar la conversación
+                    const querySpec = {
+                        query: "SELECT * FROM c WHERE c.conversationId = @conversationId AND c.type = 'conversation'",
+                        parameters: [
+                            {
+                                name: "@conversationId",
+                                value: conversationId
+                            }
+                        ]
+                    };
+                    
+                    const { resources } = await this.container.items.query(querySpec).fetchAll();
+                    
+                    if (resources.length > 0) {
+                        const conversation = resources[0];
+                        conversation.lastUpdateTime = new Date().toISOString();
+                        conversation.messageCount = (conversation.messageCount || 0) + 1;
+                        
+                        try {
+                            // Intentar actualizar la conversación existente
+                            const { resource } = await this.container.item(conversation.id, conversation.conversationId)
+                                .replace(conversation);
+                            
+                            console.log(`Actividad actualizada en CosmosDB: ${conversationId}`);
+                            this.conversationCache.set(conversationId, resource);
+                            return resource;
+                        } catch (replaceError) {
+                            if (replaceError.code === 404) {
+                                console.warn(`Conversación no encontrada para actualizar: ${conversationId}, creando nueva`);
+                                // Si no se encuentra, crear una nueva
+                                return await this.createConversation(conversationId, 'unknown');
+                            }
+                            throw replaceError;
                         }
-                    ]
-                };
-                
-                const { resources } = await this.container.items.query(querySpec).fetchAll();
-                
-                if (resources.length > 0) {
-                    const conversation = resources[0];
-                    conversation.lastUpdateTime = new Date().toISOString();
-                    conversation.messageCount = (conversation.messageCount || 0) + 1;
-                    
-                    const { resource } = await this.container.item(conversation.id, conversation.conversationId)
-                        .replace(conversation);
-                    
-                    console.log(`Actividad actualizada en CosmosDB: ${conversationId}`);
-                    return resource;
+                    } else {
+                        console.log(`Conversación no encontrada para actualizar: ${conversationId}, creando nueva`);
+                        // Si no se encuentra, crear una nueva
+                        return await this.createConversation(conversationId, 'unknown');
+                    }
+                } catch (queryError) {
+                    console.error(`Error en query de conversación: ${queryError.message}`);
+                    // Si falla la query, intentar crear una nueva
+                    return await this.createConversation(conversationId, 'unknown');
                 }
-                
-                console.log(`Conversación no encontrada para actualizar: ${conversationId}`);
-                return null;
             } else {
                 // Actualizar en memoria
-                const conversation = this.memoryStorage.conversations.get(conversationId);
-                if (conversation) {
-                    conversation.lastUpdateTime = new Date().toISOString();
-                    conversation.messageCount = (conversation.messageCount || 0) + 1;
-                    this.memoryStorage.conversations.set(conversationId, conversation);
-                    
-                    console.log(`Actividad actualizada en memoria: ${conversationId}`);
-                    return conversation;
+                let conversation = this.memoryStorage.conversations.get(conversationId);
+                
+                if (!conversation) {
+                    // Si no existe, crear una nueva
+                    console.log(`Conversación no encontrada en memoria: ${conversationId}, creando nueva`);
+                    return await this.createConversation(conversationId, 'unknown');
                 }
                 
-                console.log(`Conversación no encontrada en memoria: ${conversationId}`);
-                return null;
+                conversation.lastUpdateTime = new Date().toISOString();
+                conversation.messageCount = (conversation.messageCount || 0) + 1;
+                this.memoryStorage.conversations.set(conversationId, conversation);
+                this.conversationCache.set(conversationId, conversation);
+                
+                console.log(`Actividad actualizada en memoria: ${conversationId}`);
+                return conversation;
             }
         } catch (error) {
             console.error(`Error al actualizar actividad: ${error.message}`);
@@ -331,7 +378,9 @@ class ConversationService {
                 return this.updateLastActivity(conversationId);
             }
             
-            return null;
+            // CORREGIDO: En lugar de devolver null, crear una conversación básica
+            console.warn(`No se pudo actualizar actividad, creando conversación básica: ${conversationId}`);
+            return await this.createConversation(conversationId, 'unknown');
         }
     }
 
@@ -346,6 +395,9 @@ class ConversationService {
             memoryStats: {
                 conversations: this.memoryStorage.conversations.size,
                 messages: this.memoryStorage.messages.length
+            },
+            cacheStats: {
+                conversationsCached: this.conversationCache.size
             },
             cosmosAvailable: cosmosDbConfig.isAvailable()
         };
@@ -373,6 +425,62 @@ class ConversationService {
         if (cleanedCount > 0) {
             console.log(`ConversationService: Limpiados ${cleanedCount} mensajes antiguos de memoria`);
         }
+    }
+
+    /**
+     * NUEVO: Limpia el cache de conversaciones
+     * @returns {number} - Número de entradas limpiadas
+     */
+    clearConversationCache() {
+        const count = this.conversationCache.size;
+        this.conversationCache.clear();
+        console.log(`ConversationService: Cache de conversaciones limpiado (${count} entradas)`);
+        return count;
+    }
+
+    /**
+     * NUEVO: Fuerza la reinicialización del servicio
+     */
+    async forceReinitialize() {
+        console.log('ConversationService: Forzando reinicialización');
+        this.useCosmosDb = false;
+        this.initializationAttempted = false;
+        this.container = null;
+        this.conversationCache.clear();
+        
+        await this.initializeCosmosDb();
+        console.log(`ConversationService: Reinicializado - usando CosmosDB: ${this.useCosmosDb}`);
+    }
+
+    /**
+     * NUEVO: Verifica el estado de una conversación específica
+     * @param {string} conversationId - ID de la conversación
+     * @returns {Object} - Estado de la conversación
+     */
+    async checkConversationStatus(conversationId) {
+        const status = {
+            conversationId,
+            existsInCache: this.conversationCache.has(conversationId),
+            existsInMemory: this.memoryStorage.conversations.has(conversationId),
+            existsInCosmos: false,
+            error: null
+        };
+
+        if (this.useCosmosDb && this.container) {
+            try {
+                const querySpec = {
+                    query: "SELECT * FROM c WHERE c.conversationId = @conversationId AND c.type = 'conversation'",
+                    parameters: [{ name: "@conversationId", value: conversationId }]
+                };
+                
+                const { resources } = await this.container.items.query(querySpec).fetchAll();
+                status.existsInCosmos = resources.length > 0;
+            } catch (error) {
+                status.error = error.message;
+            }
+        }
+
+        return status;
     }
 }
 
