@@ -421,6 +421,7 @@ class TeamsBot extends DialogBot {
       
     } catch (error) {
       console.error('TeamsBot: Error en _handleLoginRequest:', error);
+      await context.sendActivity('❌ Error al iniciar el proceso de autenticación. Por favor, intenta nuevamente.');
     } finally {
       // IMPORTANTE: Limpiar SOLO si el diálogo terminó completamente
       // No limpiar aquí ya que el diálogo puede estar en progreso

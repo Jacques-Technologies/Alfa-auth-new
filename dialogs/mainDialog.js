@@ -240,7 +240,6 @@ class MainDialog extends LogoutDialog {
                     }
                 } else {
                     console.error('MainDialog: No se pudo obtener la instancia del bot');
-                    await stepContext.context.sendActivity('❌ **Error del sistema**\n\nIntenta escribir `login` nuevamente o contacta al administrador.');
                     return await stepContext.endDialog();
                 }
             } else {
