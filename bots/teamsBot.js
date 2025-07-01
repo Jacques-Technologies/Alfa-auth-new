@@ -337,7 +337,6 @@ class TeamsBot extends DialogBot {
       // Limpiar memoria
       this.authenticatedUsers.delete(userId);
 
-      await context.sendActivity('✅ Has cerrado sesión correctamente. Escribe `login` para iniciar sesión nuevamente.');
     } catch (error) {
       console.error('Error en logout:', error);
       await context.sendActivity('❌ Error al cerrar sesión. Intenta nuevamente.');
