@@ -1474,22 +1474,19 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
                 .map((f) => `Folder eq '${f}'`)
                 .join(' or ');
 
-            const results = await this.searchClient.search(undefined, {
+            const searchResults = await this.searchClient.search(undefined, {
                 vectorQueries: [vectorQuery],
                 select: ['Chunk', 'Adicional', 'FileName'],
                 filter: filterFolders,
                 top: 5
             });
 
-            /* 3. Formatear resultados */
+            /* 3. Formatear resultados - MÉTODO CORREGIDO */
             const chunks = [];
             
-            // Usar el método correcto para iterar sobre resultados de Azure Search
-            const searchResults = await results.results;
-            
-            // Si searchResults es un array, usar for...of normal
-            if (Array.isArray(searchResults)) {
-                for (const result of searchResults) {
+            try {
+                // Iterar correctamente sobre los resultados de Azure Search
+                for await (const result of searchResults.results) {
                     const document = result.document;
                     chunks.push(
                         `DOCUMENTO: ${document.FileName || 'Sin nombre'}\n` +
@@ -1499,39 +1496,28 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
                     );
                     if (chunks.length >= 5) break;
                 }
-            } else {
-                // Si no es un array, intentar iterar como antes pero con manejo de errores
+            } catch (iterError) {
+                console.error('Error iterando resultados de Azure Search:', iterError.message);
+                
+                // Método alternativo: convertir a array primero
                 try {
-                    for await (const result of results) {
-                        const document = result.document || result;
+                    const resultsArray = [];
+                    for await (const result of searchResults.results) {
+                        resultsArray.push(result);
+                    }
+                    
+                    for (const result of resultsArray.slice(0, 5)) {
+                        const document = result.document;
                         chunks.push(
                             `DOCUMENTO: ${document.FileName || 'Sin nombre'}\n` +
                             `CONTENIDO: ${document.Chunk || 'Sin contenido'}\n` +
                             `NOTAS: ${document.Adicional || 'N/A'}\n` +
                             `---`
                         );
-                        if (chunks.length >= 5) break;
                     }
-                } catch (iterError) {
-                    console.error('Error iterando resultados de búsqueda:', iterError.message);
-                    
-                    // Intentar método alternativo usando .next()
-                    try {
-                        let result = await results.next();
-                        while (!result.done && chunks.length < 5) {
-                            const document = result.value.document || result.value;
-                            chunks.push(
-                                `DOCUMENTO: ${document.FileName || 'Sin nombre'}\n` +
-                                `CONTENIDO: ${document.Chunk || 'Sin contenido'}\n` +
-                                `NOTAS: ${document.Adicional || 'N/A'}\n` +
-                                `---`
-                            );
-                            result = await results.next();
-                        }
-                    } catch (nextError) {
-                        console.error('Error usando .next():', nextError.message);
-                        return `Error al procesar resultados de búsqueda: ${nextError.message}`;
-                    }
+                } catch (arrayError) {
+                    console.error('Error con método array:', arrayError.message);
+                    return `Error al procesar resultados de búsqueda: ${arrayError.message}`;
                 }
             }
             
@@ -1546,7 +1532,6 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
             return `No se pudo realizar la búsqueda en documentos. Error: ${error.message}`;
         }
     }
-
     /**
      * Ejecuta búsqueda vectorial avanzada en documentos específicos
      * @param {string} consulta - Texto de búsqueda
@@ -1578,23 +1563,39 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
             // Filtrar solo por el folder específico
             const filterFolder = "Folder eq '1739218698126x647518027570958500'";
 
-            const results = await this.searchClient.search(undefined, {
+            const searchResults = await this.searchClient.search(undefined, {
                 vectorQueries: [vectorQuery],
                 select: ['Chunk', 'Adicional', 'FileName'],
                 filter: filterFolder,
                 top: 7  // Más resultados que la búsqueda normal
             });
 
-            /* 3. Formatear resultados */
+            /* 3. Formatear resultados - MÉTODO CORREGIDO */
             const chunks = [];
             
-            // Procesar resultados de Azure Search
             try {
-                // Si searchResults es un array, usar for...of normal
-                const searchResults = await results.results;
+                // Iterar correctamente sobre los resultados de Azure Search
+                for await (const result of searchResults.results) {
+                    const document = result.document;
+                    chunks.push(
+                        `📄 **${document.FileName || 'Documento sin nombre'}**\n` +
+                        `📝 ${document.Chunk || 'Sin contenido'}\n` +
+                        `💡 ${document.Adicional || 'Sin notas adicionales'}\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                    );
+                    if (chunks.length >= 7) break;
+                }
+            } catch (iterError) {
+                console.error('Error iterando resultados de Azure Search:', iterError.message);
                 
-                if (Array.isArray(searchResults)) {
-                    for (const result of searchResults) {
+                // Método alternativo: convertir a array primero
+                try {
+                    const resultsArray = [];
+                    for await (const result of searchResults.results) {
+                        resultsArray.push(result);
+                    }
+                    
+                    for (const result of resultsArray.slice(0, 7)) {
                         const document = result.document;
                         chunks.push(
                             `📄 **${document.FileName || 'Documento sin nombre'}**\n` +
@@ -1602,46 +1603,11 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
                             `💡 ${document.Adicional || 'Sin notas adicionales'}\n` +
                             `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
                         );
-                        if (chunks.length >= 7) break;
                     }
-                } else {
-                    // Método alternativo para iterar
-                    try {
-                        for await (const result of results) {
-                            const document = result.document || result;
-                            chunks.push(
-                                `📄 **${document.FileName || 'Documento sin nombre'}**\n` +
-                                `📝 ${document.Chunk || 'Sin contenido'}\n` +
-                                `💡 ${document.Adicional || 'Sin notas adicionales'}\n` +
-                                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-                            );
-                            if (chunks.length >= 7) break;
-                        }
-                    } catch (iterError) {
-                        console.error('Error iterando resultados:', iterError.message);
-                        
-                        // Método usando .next()
-                        try {
-                            let result = await results.next();
-                            while (!result.done && chunks.length < 7) {
-                                const document = result.value.document || result.value;
-                                chunks.push(
-                                    `📄 **${document.FileName || 'Documento sin nombre'}**\n` +
-                                    `📝 ${document.Chunk || 'Sin contenido'}\n` +
-                                    `💡 ${document.Adicional || 'Sin notas adicionales'}\n` +
-                                    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-                                );
-                                result = await results.next();
-                            }
-                        } catch (nextError) {
-                            console.error('Error usando .next():', nextError.message);
-                            return `Error al procesar resultados de búsqueda avanzada: ${nextError.message}`;
-                        }
-                    }
+                } catch (arrayError) {
+                    console.error('Error con método array:', arrayError.message);
+                    return `Error al procesar resultados de búsqueda avanzada: ${arrayError.message}`;
                 }
-            } catch (processingError) {
-                console.error('Error procesando resultados:', processingError.message);
-                return `Error al procesar resultados de la búsqueda: ${processingError.message}`;
             }
             
             if (chunks.length === 0) {

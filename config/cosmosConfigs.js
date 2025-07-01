@@ -353,35 +353,79 @@ class CosmosDbConfig {
      * @private
      */
     async verifyContainerFunctionality() {
+        let testDocumentId = null;
+        let testConversationId = null;
+        
         try {
             console.log('CosmosDbConfig: Verificando funcionalidad del contenedor...');
             
-            // Crear un documento de prueba
+            // Crear un documento de prueba con ID único
+            const timestamp = Date.now();
+            testDocumentId = `test-${timestamp}`;
+            testConversationId = `test-conversation-${timestamp}`;
+            
             const testDocument = {
-                id: 'test-' + Date.now(),
-                conversationId: 'test-conversation',
+                id: testDocumentId,
+                conversationId: testConversationId,
                 type: 'test',
                 message: 'Documento de prueba para verificar funcionalidad',
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
+                testDocument: true
             };
+            
+            console.log(`CosmosDbConfig: Creando documento de prueba con ID: ${testDocumentId}`);
             
             // Insertar documento de prueba
             const { resource: created } = await this.container.items.create(testDocument);
-            console.log('CosmosDbConfig: Documento de prueba creado');
+            console.log('CosmosDbConfig: Documento de prueba creado exitosamente');
             
-            // Leer documento de prueba
+            // Verificar que los IDs sean correctos
+            if (!created.id || !created.conversationId) {
+                throw new Error('El documento creado no tiene los IDs correctos');
+            }
+            
+            // Leer documento de prueba para verificar que existe
+            console.log(`CosmosDbConfig: Leyendo documento de prueba: ${created.id}`);
             const { resource: read } = await this.container.item(created.id, created.conversationId).read();
-            console.log('CosmosDbConfig: Documento de prueba leído');
+            
+            if (!read || read.id !== created.id) {
+                throw new Error('Error al leer el documento de prueba');
+            }
+            
+            console.log('CosmosDbConfig: Documento de prueba leído exitosamente');
             
             // Eliminar documento de prueba
+            console.log(`CosmosDbConfig: Eliminando documento de prueba: ${created.id}`);
             await this.container.item(created.id, created.conversationId).delete();
-            console.log('CosmosDbConfig: Documento de prueba eliminado');
+            console.log('CosmosDbConfig: Documento de prueba eliminado exitosamente');
             
             console.log('CosmosDbConfig: ✅ Funcionalidad del contenedor verificada');
             
         } catch (error) {
             console.error('CosmosDbConfig: ❌ Error verificando funcionalidad:', error.message);
-            throw new Error(`El contenedor no funciona correctamente: ${error.message}`);
+            
+            // Intentar limpiar el documento de prueba si existe
+            if (testDocumentId && testConversationId) {
+                try {
+                    console.log('CosmosDbConfig: Intentando limpiar documento de prueba después del error...');
+                    await this.container.item(testDocumentId, testConversationId).delete();
+                    console.log('CosmosDbConfig: Documento de prueba limpiado después del error');
+                } catch (cleanupError) {
+                    // Si falla la limpieza, no es crítico
+                    console.warn('CosmosDbConfig: No se pudo limpiar documento de prueba (puede que no exista)');
+                }
+            }
+            
+            // Personalizar mensaje de error según el tipo
+            if (error.code === 404) {
+                throw new Error(`Error de funcionalidad: No se pudo encontrar el documento (404). Esto puede indicar un problema con la configuración del partition key.`);
+            } else if (error.code === 403) {
+                throw new Error(`Error de funcionalidad: Sin permisos para operar en el contenedor (403). Verifica las credenciales.`);
+            } else if (error.code === 429) {
+                throw new Error(`Error de funcionalidad: Límite de RU/s excedido (429). El contenedor puede estar sobrecargado.`);
+            } else {
+                throw new Error(`El contenedor no funciona correctamente: ${error.message}`);
+            }
         }
     }
 
@@ -560,8 +604,21 @@ class CosmosDbConfig {
                 lastError = error;
                 console.warn(`CosmosDbConfig: ${operationName} falló en intento ${attempt}: ${error.message}`);
                 
-                // Si es un error de conectividad, intentar reconexión
-                if (error.code === 'ENOTFOUND' || error.code === 'ETIMEDOUT') {
+                // Analizar el tipo de error para decidir si reintentar
+                if (error.code === 404 && operationName.includes('delete')) {
+                    // Si es un error 404 en delete, probablemente el documento ya no existe
+                    console.log('CosmosDbConfig: Error 404 en operación delete - documento probablemente ya eliminado');
+                    return null; // Considerar como éxito
+                } else if (error.code === 409) {
+                    // Conflicto - documento ya existe, no reintentar
+                    console.log('CosmosDbConfig: Error 409 - conflicto de documento, no reintentando');
+                    throw error;
+                } else if (error.code === 403) {
+                    // Sin permisos - no reintentar
+                    console.log('CosmosDbConfig: Error 403 - sin permisos, no reintentando');
+                    throw error;
+                } else if (error.code === 'ENOTFOUND' || error.code === 'ETIMEDOUT') {
+                    // Error de conectividad, intentar reconexión
                     console.log('CosmosDbConfig: Error de conectividad, intentando reconexión...');
                     await this.attemptReconnection();
                 }
