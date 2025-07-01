@@ -159,23 +159,43 @@ class OpenAIService {
         
         // Añadir herramientas existentes
         if (this.searchAvailable) {
-            tools.push({
-                type: "function",
-                function: {
-                    name: "referencias",
-                    description: "USAR SOLO cuando el usuario pida explícitamente buscar en documentos, políticas específicas, procedimientos detallados o manuales.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            consulta: { 
-                                type: "string", 
-                                description: "Texto específico a buscar en documentos" 
-                            }
-                        },
-                        required: ["consulta"]
+            tools.push(
+                {
+                    type: "function",
+                    function: {
+                        name: "referencias",
+                        description: "USAR SOLO cuando el usuario pida explícitamente buscar en documentos, políticas específicas, procedimientos detallados o manuales.",
+                        parameters: {
+                            type: "object",
+                            properties: {
+                                consulta: { 
+                                    type: "string", 
+                                    description: "Texto específico a buscar en documentos" 
+                                }
+                            },
+                            required: ["consulta"]
+                        }
+                    }
+                },
+                // NUEVA HERRAMIENTA DE BÚSQUEDA VECTORIAL
+                {
+                    type: "function",
+                    function: {
+                        name: "buscar_documentos",
+                        description: "Busca información específica en documentos usando búsqueda vectorial avanzada. Usar cuando el usuario necesite información detallada de documentos corporativos.",
+                        parameters: {
+                            type: "object",
+                            properties: {
+                                consulta: { 
+                                    type: "string", 
+                                    description: "Consulta específica para buscar en documentos" 
+                                }
+                            },
+                            required: ["consulta"]
+                        }
                     }
                 }
-            });
+            );
         }
         
         // Añadir otras herramientas existentes (comedor, directorio, etc.)
@@ -660,6 +680,7 @@ EJEMPLOS DE USO DE TARJETAS:
 
 INSTRUCCIONES PARA OTRAS HERRAMIENTAS:
 - Solo usa "referencias" cuando pidan buscar en documentos específicos
+- Solo usa "buscar_documentos" cuando necesiten información detallada de documentos corporativos
 - Solo usa "comedor" cuando pregunten por menú del día
 - Solo usa "directorio" cuando busquen contactos de empleados
 
@@ -784,6 +805,9 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             // HERRAMIENTAS EXISTENTES
             case 'referencias':
                 return await this.ejecutarReferencias(parametros.consulta);
+                
+            case 'buscar_documentos':
+                return await this.ejecutarBuscarDocumentos(parametros.consulta);
                 
             case 'comedor':
                 return await this.ejecutarComedor(parametros.filtro_dia);
@@ -1202,6 +1226,116 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             console.error(`Error en referencias: ${error.message}`);
             console.error('Stack trace:', error.stack);
             return `No se pudo realizar la búsqueda en documentos. Error: ${error.message}`;
+        }
+    }
+
+    /**
+     * Ejecuta búsqueda vectorial avanzada en documentos específicos
+     * @param {string} consulta - Texto de búsqueda
+     * @returns {string} - Resultados formateados
+     */
+    async ejecutarBuscarDocumentos(consulta) {
+        try {
+            // Verificar que el servicio de búsqueda esté disponible
+            if (!this.searchAvailable || !this.searchClient) {
+                return "El servicio de búsqueda en documentos no está disponible en este momento.";
+            }
+            
+            console.log(`Ejecutando búsqueda vectorial avanzada para: "${consulta}"`);
+            
+            /* 1. Embedding del texto */
+            const emb = await this.openai.embeddings.create({
+                model: 'text-embedding-3-large',
+                input: consulta,
+                dimensions: 1024
+            });
+            
+            /* 2. Consulta vectorial con parámetros específicos */
+            const vectorQuery = {
+                vector: emb.data[0].embedding,
+                kNearestNeighbors: 7,  // Más resultados que la búsqueda normal
+                fields: 'Embedding'
+            };
+            
+            // Filtrar solo por el folder específico
+            const filterFolder = "Folder eq '1739218698126x647518027570958500'";
+
+            const results = await this.searchClient.search(undefined, {
+                vectorQueries: [vectorQuery],
+                select: ['Chunk', 'Adicional', 'FileName'],
+                filter: filterFolder,
+                top: 7  // Más resultados que la búsqueda normal
+            });
+
+            /* 3. Formatear resultados */
+            const chunks = [];
+            
+            // Procesar resultados de Azure Search
+            try {
+                // Si searchResults es un array, usar for...of normal
+                const searchResults = await results.results;
+                
+                if (Array.isArray(searchResults)) {
+                    for (const result of searchResults) {
+                        const document = result.document;
+                        chunks.push(
+                            `📄 **${document.FileName || 'Documento sin nombre'}**\n` +
+                            `📝 ${document.Chunk || 'Sin contenido'}\n` +
+                            `💡 ${document.Adicional || 'Sin notas adicionales'}\n` +
+                            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                        );
+                        if (chunks.length >= 7) break;
+                    }
+                } else {
+                    // Método alternativo para iterar
+                    try {
+                        for await (const result of results) {
+                            const document = result.document || result;
+                            chunks.push(
+                                `📄 **${document.FileName || 'Documento sin nombre'}**\n` +
+                                `📝 ${document.Chunk || 'Sin contenido'}\n` +
+                                `💡 ${document.Adicional || 'Sin notas adicionales'}\n` +
+                                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                            );
+                            if (chunks.length >= 7) break;
+                        }
+                    } catch (iterError) {
+                        console.error('Error iterando resultados:', iterError.message);
+                        
+                        // Método usando .next()
+                        try {
+                            let result = await results.next();
+                            while (!result.done && chunks.length < 7) {
+                                const document = result.value.document || result.value;
+                                chunks.push(
+                                    `📄 **${document.FileName || 'Documento sin nombre'}**\n` +
+                                    `📝 ${document.Chunk || 'Sin contenido'}\n` +
+                                    `💡 ${document.Adicional || 'Sin notas adicionales'}\n` +
+                                    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                                );
+                                result = await results.next();
+                            }
+                        } catch (nextError) {
+                            console.error('Error usando .next():', nextError.message);
+                            return `Error al procesar resultados de búsqueda avanzada: ${nextError.message}`;
+                        }
+                    }
+                }
+            } catch (processingError) {
+                console.error('Error procesando resultados:', processingError.message);
+                return `Error al procesar resultados de la búsqueda: ${processingError.message}`;
+            }
+            
+            if (chunks.length === 0) {
+                return "No se encontraron documentos relevantes para esta consulta en la colección específica.";
+            }
+            
+            return `🔍 **Búsqueda Vectorial Avanzada** - Encontré ${chunks.length} resultado${chunks.length > 1 ? 's' : ''} relevante${chunks.length > 1 ? 's' : ''}:\n\n` + chunks.join('\n\n');
+            
+        } catch (error) {
+            console.error(`Error en búsqueda vectorial avanzada: ${error.message}`);
+            console.error('Stack trace:', error.stack);
+            return `No se pudo realizar la búsqueda vectorial avanzada. Error: ${error.message}`;
         }
     }
 
