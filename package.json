@@ -1,198 +1,50 @@
 {
-  "name": "alfa-bot",
-  "version": "2.0.0",
-  "description": "Bot inteligente para empleados de Alfa Corporation con sistema estricto de gestión de vacaciones y integración OpenAI",
+  "name": "alfa-teams-bot",
+  "version": "1.0.0",
+  "description": "Bot de Teams para Alfa con OpenAI y CosmosDB",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "NODE_ENV=development nodemon index.js",
-    "dev:debug": "NODE_ENV=development nodemon --inspect index.js",
-    "build": "node build.js",
-    "build:prod": "NODE_ENV=production node build.js",
-    "build:watch": "node build.js watch",
-    "build:analyze": "node build.js analyze",
-    "build:clean": "node build.js clean",
-    "start:prod": "NODE_ENV=production node dist/index.js",
-    "lint": "eslint . --ext .js",
-    "lint:fix": "eslint . --ext .js --fix",
-    "lint:report": "eslint . --ext .js -f html -o eslint-report.html",
+    "dev": "nodemon index.js",
     "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
-    "test:ci": "jest --ci --coverage --watchAll=false",
-    "health": "curl -f http://localhost:3978/health || exit 1",
-    "logs": "pm2 logs alfa-bot",
-    "monitor": "pm2 monit",
-    "deploy": "npm run build:prod && pm2 restart ecosystem.config.js",
-    "setup": "npm install && npm run build",
-    "cleanup": "npm run build:clean && rm -rf node_modules && npm install",
-    "docker:build": "docker build -t alfa-bot:latest .",
-    "docker:run": "docker run -p 3978:3978 alfa-bot:latest",
-    "prestart": "node -e \"console.log('🤖 Iniciando Alfa Bot v' + require('./package.json').version)\"",
-    "postinstall": "echo '✅ Dependencias instaladas. Ejecuta npm run setup para configurar el proyecto.'"
+    "lint": "eslint .",
+    "build": "node build.js"
   },
   "keywords": [
     "bot",
-    "microsoft-bot-framework",
     "teams",
+    "microsoft",
     "openai",
-    "vacations",
-    "hr",
-    "alfa-corporation",
-    "azure",
-    "oauth",
-    "nodejs"
+    "cosmosdb"
   ],
-  "author": {
-    "name": "Alfa Corporation",
-    "email": "tech@alfacorp.com"
-  },
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/alfacorp/alfa-bot.git"
-  },
-  "bugs": {
-    "url": "https://github.com/alfacorp/alfa-bot/issues"
-  },
-  "homepage": "https://github.com/alfacorp/alfa-bot#readme",
-  "engines": {
-    "node": ">=16.0.0",
-    "npm": ">=8.0.0"
-  },
+  "author": "Alfa",
+  "license": "UNLICENSED",
+  "private": true,
   "dependencies": {
-    "@azure/cosmos": "^4.0.0",
-    "@azure/search-documents": "^12.0.0",
-    "axios": "^1.6.2",
-    "botbuilder": "^4.21.1",
-    "botbuilder-dialogs": "^4.21.1",
+    "@azure/cosmos": "^3.17.3",
+    "@azure/search-documents": "^11.3.1",
+    "axios": "^1.4.0",
+    "botbuilder": "^4.19.3",
+    "botbuilder-dialogs": "^4.19.3",
     "dotenv": "^16.3.1",
+    "express": "^4.18.2",
     "https": "^1.0.0",
-    "luxon": "^3.4.4",
-    "openai": "^4.20.1",
-    "restify": "^11.1.0"
+    "luxon": "^3.3.0",
+    "openai": "^4.7.1",
+    "restify": "^11.1.0",
+    "uuid": "^9.0.0"
   },
   "devDependencies": {
-    "@types/node": "^20.10.0",
-    "esbuild": "^0.19.8",
-    "eslint": "^8.56.0",
-    "jest": "^29.7.0",
-    "nodemon": "^3.0.2",
-    "pm2": "^5.3.0",
-    "supertest": "^6.3.3"
+    "esbuild": "^0.18.17",
+    "eslint": "^8.45.0",
+    "eslint-config-standard": "^17.1.0",
+    "eslint-plugin-import": "^2.27.5",
+    "eslint-plugin-node": "^11.1.0",
+    "eslint-plugin-promise": "^6.1.1",
+    "jest": "^29.6.1",
+    "nodemon": "^3.0.1"
   },
-  "optionalDependencies": {
-    "bufferutil": "^4.0.8",
-    "utf-8-validate": "^6.0.3"
-  },
-  "peerDependencies": {
-    "typescript": ">=4.0.0"
-  },
-  "browserslist": {
-    "production": [
-      "node >= 16"
-    ],
-    "development": [
-      "node >= 16"
-    ]
-  },
-  "jest": {
-    "testEnvironment": "node",
-    "coverageDirectory": "coverage",
-    "collectCoverageFrom": [
-      "**/*.js",
-      "!**/node_modules/**",
-      "!**/dist/**",
-      "!**/coverage/**",
-      "!jest.config.js",
-      "!build.js",
-      "!ecosystem.config.js"
-    ],
-    "testMatch": [
-      "**/__tests__/**/*.js",
-      "**/?(*.)+(spec|test).js"
-    ],
-    "setupFilesAfterEnv": [
-      "<rootDir>/jest.setup.js"
-    ],
-    "testTimeout": 30000,
-    "verbose": true
-  },
-  "nodemonConfig": {
-    "ignore": [
-      "dist/",
-      "node_modules/",
-      "coverage/",
-      "logs/"
-    ],
-    "ext": "js,json",
-    "env": {
-      "NODE_ENV": "development"
-    },
-    "delay": 1000
-  },
-  "pm2": {
-    "name": "alfa-bot",
-    "script": "index.js",
-    "instances": 1,
-    "exec_mode": "fork",
-    "watch": false,
-    "max_memory_restart": "500M",
-    "env": {
-      "NODE_ENV": "development",
-      "PORT": 3978
-    },
-    "env_production": {
-      "NODE_ENV": "production",
-      "PORT": 3978
-    },
-    "log_file": "logs/combined.log",
-    "out_file": "logs/out.log",
-    "error_file": "logs/error.log",
-    "log_date_format": "YYYY-MM-DD HH:mm:ss Z",
-    "merge_logs": true,
-    "max_restarts": 10,
-    "min_uptime": "10s"
-  },
-  "config": {
-    "bot": {
-      "name": "Alfa Bot",
-      "version": "2.0.0",
-      "description": "Bot inteligente para empleados de Alfa Corporation",
-      "features": [
-        "sistema-estricto-vacaciones",
-        "openai-integration",
-        "oauth-authentication",
-        "azure-search",
-        "adaptive-cards",
-        "conversation-management"
-      ]
-    },
-    "development": {
-      "port": 3978,
-      "debug": true,
-      "hotReload": true
-    },
-    "production": {
-      "port": 3978,
-      "debug": false,
-      "clustering": true,
-      "monitoring": true
-    }
-  },
-  "funding": {
-    "type": "corporate",
-    "url": "https://alfacorp.com/funding"
-  },
-  "volta": {
-    "node": "18.19.0",
-    "npm": "10.2.3"
-  },
-  "overrides": {
-    "semver": "^7.5.4"
-  },
-  "resolutions": {
-    "minimist": "^1.2.6",
-    "json5": "^2.2.3"
+  "engines": {
+    "node": ">=18 <=20"
   }
 }
