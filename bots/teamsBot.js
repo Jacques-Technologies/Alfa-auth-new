@@ -299,6 +299,23 @@ class TeamsBot extends DialogBot {
     }
     
     this.activeDialogs.add(dialogKey);
+
+    try {
+      const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
+      
+      if (!context.activity.value && connectionName) {
+        const loginCard = CardFactory.oauthCard(
+          connectionName
+        );
+        await context.sendActivity({ attachments: [loginCard] });
+      } else if (!connectionName) {
+        await context.sendActivity('❌ Error: Configuración OAuth no encontrada.');
+      }
+
+      await this.dialog.run(context, this.dialogState);
+    } finally {
+      this.activeDialogs.delete(dialogKey);
+    }
   }
 
   /**
