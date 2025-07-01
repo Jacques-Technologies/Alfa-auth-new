@@ -28,8 +28,7 @@ class MainDialog extends LogoutDialog {
         this.addDialog(new WaterfallDialog(MAIN_WATERFALL_DIALOG, [
             this.promptStep.bind(this),
             this.loginStep.bind(this),
-            this.displayTokenPhase1.bind(this),
-            this.displayTokenPhase2.bind(this)
+            this.displayTokenPhase1.bind(this)
         ]));
 
         this.initialDialogId = MAIN_WATERFALL_DIALOG;
@@ -66,11 +65,44 @@ class MainDialog extends LogoutDialog {
      */
     async loginStep(stepContext) {
         const tokenResponse = stepContext.result;
-        if (tokenResponse) {
-            await stepContext.context.sendActivity('Bienvenido a Alfa');
-            return await stepContext.prompt(CONFIRM_PROMPT, '¿Quieres ver tu token?');
+        if (tokenResponse && tokenResponse.token) {
+            // Obtener información del usuario del token si es posible
+            const userId = stepContext.context.activity.from.id;
+            const conversationId = stepContext.context.activity.conversation.id;
+            
+            // Intentar obtener información del usuario desde el token
+            let userName = 'Usuario';
+            try {
+                // Decodificar el token JWT para obtener información básica
+                const tokenParts = tokenResponse.token.split('.');
+                if (tokenParts.length === 3) {
+                    const payload = JSON.parse(Buffer.from(tokenParts[1], 'base64').toString());
+                    userName = payload.name || payload.preferred_username || 'Usuario';
+                }
+            } catch (error) {
+                console.log('No se pudo extraer información del token:', error.message);
+            }
+
+            // Marcar usuario como autenticado en el bot
+            const bot = stepContext.context.turnState.get('bot');
+            if (bot && typeof bot.setUserAuthenticated === 'function') {
+                const authSuccess = await bot.setUserAuthenticated(userId, conversationId, {
+                    email: userName,
+                    name: userName,
+                    token: tokenResponse.token,
+                    context: stepContext.context
+                });
+                
+                if (authSuccess) {
+                    console.log(`Usuario ${userId} autenticado exitosamente en MainDialog`);
+                }
+            }
+
+            await stepContext.context.sendActivity('✅ **¡Autenticación exitosa!**\n\nBienvenido a Alfa. Ya puedes usar todas las funciones del asistente.');
+            return await stepContext.prompt(CONFIRM_PROMPT, '¿Quieres ver tu token de acceso?');
         }
-        await stepContext.context.sendActivity('No lograste iniciar sesión. Intente de nuevo');
+        
+        await stepContext.context.sendActivity('❌ **Error de autenticación**\n\nNo se pudo completar el inicio de sesión. Por favor, intenta nuevamente escribiendo `login`.');
         return await stepContext.endDialog();
     }
 
@@ -79,24 +111,58 @@ class MainDialog extends LogoutDialog {
      * @param {WaterfallStepContext} stepContext - The waterfall step context.
      */
     async displayTokenPhase1(stepContext) {
-        await stepContext.context.sendActivity('Gracias');
-
         const result = stepContext.result;
+        
         if (result) {
-            return await stepContext.beginDialog(OAUTH_PROMPT);
+            // El usuario quiere ver el token
+            // Obtener el token del bot o del estado
+            const userId = stepContext.context.activity.from.id;
+            const bot = stepContext.context.turnState.get('bot');
+            
+            let token = null;
+            
+            // Intentar obtener el token del bot
+            if (bot && typeof bot._getUserOAuthToken === 'function') {
+                try {
+                    token = await bot._getUserOAuthToken(stepContext.context, userId);
+                } catch (error) {
+                    console.error('Error obteniendo token del bot:', error.message);
+                }
+            }
+            
+            // Si no se pudo obtener del bot, intentar obtener del UserTokenClient
+            if (!token) {
+                try {
+                    const userTokenClient = stepContext.context.turnState.get(stepContext.context.adapter.UserTokenClientKey);
+                    const connectionName = process.env.connectionName;
+                    
+                    if (userTokenClient && connectionName) {
+                        const tokenResponse = await userTokenClient.getUserToken(
+                            userId,
+                            connectionName,
+                            stepContext.context.activity.channelId
+                        );
+                        
+                        if (tokenResponse && tokenResponse.token) {
+                            token = tokenResponse.token;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error obteniendo token del UserTokenClient:', error.message);
+                }
+            }
+            
+            if (token) {
+                // Mostrar solo una parte del token por seguridad
+                const tokenPreview = token.substring(0, 50) + '...' + token.substring(token.length - 20);
+                await stepContext.context.sendActivity(`🔐 **Tu token de acceso**:\n\n\`${tokenPreview}\`\n\n⚠️ *Por seguridad, solo se muestra una vista previa del token.*`);
+            } else {
+                await stepContext.context.sendActivity('❌ No se pudo obtener el token de acceso.');
+            }
+        } else {
+            await stepContext.context.sendActivity('👍 **Perfecto**\n\n¡Ya estás listo para usar el asistente! Puedes preguntarme sobre vacaciones, consultar tu información, buscar documentos y mucho más.');
         }
-        return await stepContext.endDialog();
-    }
-
-    /**
-     * Displays the token to the user.
-     * @param {WaterfallStepContext} stepContext - The waterfall step context.
-     */
-    async displayTokenPhase2(stepContext) {
-        const tokenResponse = stepContext.result;
-        if (tokenResponse) {
-            await stepContext.context.sendActivity(`Token: ${tokenResponse.token}`);
-        }
+        
         return await stepContext.endDialog();
     }
 }
