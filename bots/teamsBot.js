@@ -1,4 +1,4 @@
-// teamsBot.js - Versión completa con manejo estricto de vacaciones y tarjetas dinámicas
+// teamsBot.js - Versión corregida sin duplicaciones y con mejor manejo de autenticación
 
 const { DialogBot } = require('./dialogBot');
 const { CardFactory } = require('botbuilder');
@@ -10,7 +10,7 @@ const conversationService = require('../services/conversationService');
 
 /**
  * TeamsBot class extends DialogBot to handle Teams-specific activities, OpenAI integration, and strict vacation management.
- * Incluye manejo de tarjetas dinámicas generadas por OpenAI y proceso guiado para vacaciones.
+ * CORREGIDO: Elimina duplicaciones y mejora el manejo de autenticación.
  */
 class TeamsBot extends DialogBot {
   /**
@@ -37,6 +37,9 @@ class TeamsBot extends DialogBot {
     this.authenticatedUsers = new Map();
     this.authState = this.userState.createProperty('AuthState');
     this.activeDialogs = new Set();
+    
+    // NUEVO: Control de procesos activos para evitar duplicaciones
+    this.activeProcesses = new Map();
   }
 
   /**
@@ -99,7 +102,7 @@ class TeamsBot extends DialogBot {
       // Primero intentar obtener de la memoria
       const userInfo = this.authenticatedUsers.get(userId);
       if (userInfo && userInfo.token) {
-        console.log('Token OAuth: ' + userInfo.token);
+        console.log('Token OAuth obtenido de memoria');
         return userInfo.token;
       }
 
@@ -227,7 +230,7 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Maneja todos los mensajes entrantes con lógica de autenticación y manejo estricto de vacaciones
+   * CORREGIDO: Maneja todos los mensajes entrantes sin duplicaciones
    * @param {TurnContext} context - Contexto del turno
    * @param {Function} next - Siguiente middleware
    */
@@ -239,64 +242,79 @@ class TeamsBot extends DialogBot {
       const conversationId = context.activity.conversation.id;
       const text = (context.activity.text || '').trim().toLowerCase();
 
-      // Recuperar estado de autenticación persistente
-      const authData = await this.authState.get(context, {});
-      const isAuthenticated = authData[userId]?.authenticated === true;
+      // NUEVO: Evitar procesamiento duplicado
+      const processKey = `${userId}-${Date.now()}`;
+      if (this.activeProcesses.has(userId)) {
+        console.log(`TeamsBot: Procesamiento ya activo para usuario ${userId}, ignorando`);
+        return await next();
+      }
+      this.activeProcesses.set(userId, processKey);
 
-      console.log(`TeamsBot: Procesando mensaje de ${userId}: "${text}" (Autenticado: ${isAuthenticated})`);
-      console.log('TeamsBot: Activity type:', context.activity.type);
-      console.log('TeamsBot: Activity value:', context.activity.value);
+      try {
+        // Recuperar estado de autenticación persistente
+        const authData = await this.authState.get(context, {});
+        const isAuthenticated = authData[userId]?.authenticated === true;
 
-      // Procesar comandos específicos primero
-      if (this._isExplicitLoginCommand(text)) {
-        await this._handleLoginRequest(context, userId);
-      } else if (context.activity.value && Object.keys(context.activity.value).length > 0) {
-        // Manejo de submit de tarjetas adaptativas
-        console.log('TeamsBot: Detectado submit de tarjeta adaptativa');
-        await this._handleCardSubmit(context, context.activity.value);
-      } else if (this._isHelpRequest(text)) {
-        await this._sendHelpMessage(context);
-      } else if (this._isLogoutRequest(text)) {
-        await this._handleLogoutRequest(context, userId);
-      } else if (this._isLegacyActionsRequest(text)) {
-        // Comando legacy "acciones" - explicar el nuevo comportamiento
-        await this._handleLegacyActions(context, isAuthenticated);
-      } else {
-        // Mensajes generales - requieren autenticación para OpenAI
-        if (isAuthenticated) {
-          // NUEVO: Verificar si es una consulta ambigua de vacaciones
-          if (this._isAmbiguousVacationQuery(context.activity.text)) {
-            console.log('TeamsBot: Detectada consulta ambigua de vacaciones');
-            
-            // Generar respuesta con tarjeta guía
-            const guidePrompt = "El usuario quiere solicitar vacaciones pero no especifica el tipo. Usa la herramienta guiar_proceso_vacaciones.";
-            try {
-              const response = await this.openaiService.procesarMensaje(guidePrompt, []);
+        console.log(`TeamsBot: Procesando mensaje de ${userId}: "${text}" (Autenticado: ${isAuthenticated})`);
+
+        // Procesar comandos específicos primero
+        if (this._isExplicitLoginCommand(text)) {
+          await this._handleLoginRequest(context, userId);
+        } else if (context.activity.value && Object.keys(context.activity.value).length > 0) {
+          // Manejo de submit de tarjetas adaptativas
+          console.log('TeamsBot: Detectado submit de tarjeta adaptativa');
+          await this._handleCardSubmit(context, context.activity.value);
+        } else if (this._isHelpRequest(text)) {
+          await this._sendHelpMessage(context);
+        } else if (this._isLogoutRequest(text)) {
+          await this._handleLogoutRequest(context, userId);
+        } else if (this._isLegacyActionsRequest(text)) {
+          // Comando legacy "acciones" - explicar el nuevo comportamiento
+          await this._handleLegacyActions(context, isAuthenticated);
+        } else {
+          // Mensajes generales - requieren autenticación para OpenAI
+          if (isAuthenticated) {
+            // NUEVO: Verificar si es una consulta ambigua de vacaciones
+            if (this._isAmbiguousVacationQuery(context.activity.text)) {
+              console.log('TeamsBot: Detectada consulta ambigua de vacaciones');
               
-              if (response.type === 'card') {
-                if (response.content) {
-                  await context.sendActivity(response.content);
+              // Generar respuesta con tarjeta guía
+              const guidePrompt = "El usuario quiere solicitar vacaciones pero no especifica el tipo. Usa la herramienta guiar_proceso_vacaciones.";
+              try {
+                const response = await this.openaiService.procesarMensaje(guidePrompt, []);
+                
+                if (response.type === 'card') {
+                  if (response.content) {
+                    await context.sendActivity(response.content);
+                  }
+                  await context.sendActivity({ attachments: [response.card] });
+                } else {
+                  await context.sendActivity(response.content || response);
                 }
-                await context.sendActivity({ attachments: [response.card] });
-              } else {
-                await context.sendActivity(response.content || response);
+              } catch (error) {
+                console.error('TeamsBot: Error procesando consulta ambigua:', error);
+                await context.sendActivity('🏖️ Para solicitar vacaciones, necesito saber qué tipo necesitas:\n\n• **Vacaciones regulares** - días anuales\n• **Por matrimonio** - días especiales por boda\n• **Por nacimiento** - paternidad/maternidad\n\n¿Cuál necesitas?');
               }
-            } catch (error) {
-              console.error('TeamsBot: Error procesando consulta ambigua:', error);
-              await context.sendActivity('🏖️ Para solicitar vacaciones, necesito saber qué tipo necesitas:\n\n• **Vacaciones regulares** - días anuales\n• **Por matrimonio** - días especiales por boda\n• **Por nacimiento** - paternidad/maternidad\n\n¿Cuál necesitas?');
+            } else {
+              // Procesamiento normal con OpenAI
+              await this.processOpenAIMessage(context, context.activity.text, userId, conversationId);
             }
           } else {
-            // Procesamiento normal con OpenAI
-            await this.processOpenAIMessage(context, context.activity.text, userId, conversationId);
+            await context.sendActivity('🔒 Necesitas iniciar sesión para usar el asistente. Escribe `login` para autenticarte.');
           }
-        } else {
-          await context.sendActivity('🔒 Necesitas iniciar sesión para usar el asistente. Escribe `login` para autenticarte.');
         }
+      } finally {
+        // Limpiar proceso activo
+        this.activeProcesses.delete(userId);
       }
 
     } catch (error) {
       console.error('TeamsBot: Error en handleMessageWithAuth:', error);
       await context.sendActivity('❌ Ocurrió un error inesperado. Intenta de nuevo o escribe `ayuda` para más información.');
+      
+      // Limpiar proceso activo en caso de error
+      const userId = context.activity.from.id;
+      this.activeProcesses.delete(userId);
     }
 
     await next();
@@ -343,7 +361,7 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Maneja solicitudes de login
+   * CORREGIDO: Maneja solicitudes de login sin duplicaciones
    * @param {TurnContext} context - Contexto del turno
    * @param {string} userId - ID del usuario
    * @private
@@ -351,7 +369,20 @@ class TeamsBot extends DialogBot {
   async _handleLoginRequest(context, userId) {
     const dialogKey = `auth-${userId}`;
     
+    // CORREGIDO: Verificar si ya hay un proceso de autenticación activo
     if (this.activeDialogs.has(dialogKey)) {
+      console.log(`TeamsBot: Proceso de autenticación ya activo para usuario ${userId}`);
+      await context.sendActivity('⏳ Ya tienes un proceso de autenticación en curso. Por favor, completa el login actual.');
+      return;
+    }
+    
+    // CORREGIDO: Verificar si el usuario ya está autenticado
+    const authData = await this.authState.get(context, {});
+    const isAuthenticated = authData[userId]?.authenticated === true;
+    
+    if (isAuthenticated) {
+      console.log(`TeamsBot: Usuario ${userId} ya está autenticado`);
+      await context.sendActivity('✅ **Ya estás autenticado**\n\n¡Puedes usar todas las funciones del bot! Pregúntame lo que necesites.');
       return;
     }
     
@@ -360,16 +391,20 @@ class TeamsBot extends DialogBot {
     try {
       const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
       
-      if (!context.activity.value && connectionName) {
-        const loginCard = CardFactory.oauthCard(
-          connectionName
-        );
-        await context.sendActivity({ attachments: [loginCard] });
-      } else if (!connectionName) {
-        await context.sendActivity('❌ Error: Configuración OAuth no encontrada.');
+      if (!connectionName) {
+        await context.sendActivity('❌ **Error de configuración**: No se encontró la configuración de autenticación. Contacta al administrador.');
+        return;
       }
 
+      // CORREGIDO: Solo enviar mensaje informativo UNA vez
+      await context.sendActivity('🔄 **Iniciando autenticación...**\n\nTe mostraré la tarjeta de login a continuación.');
+      
+      // CORREGIDO: Solo ejecutar el diálogo, no crear tarjeta manual
       await this.dialog.run(context, this.dialogState);
+      
+    } catch (error) {
+      console.error('TeamsBot: Error en _handleLoginRequest:', error);
+      await context.sendActivity('❌ Error al iniciar el proceso de autenticación. Por favor, intenta nuevamente.');
     } finally {
       this.activeDialogs.delete(dialogKey);
     }
@@ -562,7 +597,7 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
   }
 
   /**
-   * Maneja el submit de las tarjetas adaptativas con token OAuth automático y manejo de guía de vacaciones
+   * CORREGIDO: Maneja el submit de las tarjetas adaptativas sin duplicaciones
    * @param {TurnContext} context - Contexto del turno
    * @param {Object} submitData - Datos enviados desde la tarjeta
    * @private
@@ -653,6 +688,52 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
     }
   }
 
+  // [Los métodos restantes se mantienen igual...]
+  // _processDateFields, _convertToISODate, _processUrlParameters, _executeHttpRequest, etc.
+
+  /**
+   * CORREGIDO: Maneja actividades invoke sin duplicaciones
+   * @param {TurnContext} context - Contexto del turno
+   * @returns {Object} - Respuesta de la actividad invoke
+   */
+  async onInvokeActivity(context) {
+    try {
+      this._ensureBotInContext(context);
+      const activityName = context.activity.name || 'unknown';
+      const userId = context.activity.from.id;
+      const dialogKey = `auth-${userId}`;
+
+      console.log(`TeamsBot: Actividad invoke recibida: ${activityName}`);
+
+      if (activityName === 'signin/verifyState' || activityName === 'signin/tokenExchange') {
+        // CORREGIDO: Solo ejecutar si no hay ya un diálogo activo
+        if (!this.activeDialogs.has(dialogKey)) {
+          this.activeDialogs.add(dialogKey);
+          try {
+            await this.dialog.run(context, this.dialogState);
+            return { status: 200 };
+          } finally {
+            this.activeDialogs.delete(dialogKey);
+          }
+        } else {
+          console.log(`TeamsBot: Diálogo ya activo para invoke ${activityName}`);
+          return { status: 200 };
+        }
+      } else if (activityName === 'signin/failure') {
+        await context.sendActivity('❌ Error en autenticación OAuth. Escribe `login` para intentar de nuevo.');
+        this.activeDialogs.delete(dialogKey);
+        return { status: 200 };
+      }
+
+      return await super.onInvokeActivity(context);
+    } catch (error) {
+      console.error('TeamsBot: Error en onInvokeActivity:', error);
+      return { status: 500 };
+    }
+  }
+
+  // [Resto de métodos permanecen iguales...]
+  
   /**
    * Procesa los campos de fecha para convertirlos al formato ISO 8601
    * @param {Object} fieldData - Datos de los campos
@@ -972,41 +1053,6 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
     }
 
     await context.sendActivity(errorMessage);
-  }
-
-  /**
-   * Maneja actividades invoke (principalmente OAuth)
-   * @param {TurnContext} context - Contexto del turno
-   * @returns {Object} - Respuesta de la actividad invoke
-   */
-  async onInvokeActivity(context) {
-    try {
-      this._ensureBotInContext(context);
-      const activityName = context.activity.name || 'unknown';
-      const userId = context.activity.from.id;
-      const dialogKey = `auth-${userId}`;
-
-      console.log(`TeamsBot: Actividad invoke recibida: ${activityName}`);
-
-      if (activityName === 'signin/verifyState' || activityName === 'signin/tokenExchange') {
-        this.activeDialogs.add(dialogKey);
-        try {
-          await this.dialog.run(context, this.dialogState);
-          return { status: 200 };
-        } finally {
-          this.activeDialogs.delete(dialogKey);
-        }
-      } else if (activityName === 'signin/failure') {
-        await context.sendActivity('❌ Error en autenticación OAuth. Escribe `login` para intentar de nuevo.');
-        this.activeDialogs.delete(dialogKey);
-        return { status: 200 };
-      }
-
-      return await super.onInvokeActivity(context);
-    } catch (error) {
-      console.error('TeamsBot: Error en onInvokeActivity:', error);
-      return { status: 500 };
-    }
   }
 
   /**
