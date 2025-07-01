@@ -307,7 +307,6 @@ class TeamsBot extends DialogBot {
         const loginCard = CardFactory.oauthCard(
           connectionName
         );
-        await context.sendActivity({ attachments: [loginCard] });
       } else if (!connectionName) {
         await context.sendActivity('❌ Error: Configuración OAuth no encontrada.');
       }
@@ -337,6 +336,7 @@ class TeamsBot extends DialogBot {
       // Limpiar memoria
       this.authenticatedUsers.delete(userId);
 
+      await context.sendActivity('✅ Has cerrado sesión correctamente. Escribe `login` para iniciar sesión nuevamente.');
     } catch (error) {
       console.error('Error en logout:', error);
       await context.sendActivity('❌ Error al cerrar sesión. Intenta nuevamente.');
