@@ -2,7 +2,7 @@
   "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
   "manifestVersion": "1.19",
   "version": "2.2.0",
-  "id": "622d2495-5942-440f-a619-cb4369c8a090",
+  "id": "10bb16e0-89af-4080-b4ba-e875a2270c15",
   "developer": {
       "name": "Alfa Corporativo",
       "websiteUrl": "https://www.alfa.com.mx",
@@ -14,7 +14,7 @@
     "outline": "outline.png"
   },
   "name": {
-    "short": "Alfa QA bots ",
+    "short": "Alfa QA bot ",
     "full": "Alfa QA bot"
   },
   "description": {
@@ -24,7 +24,7 @@
   "accentColor": "#FFFFFF",
   "bots": [
     {
-      "botId": "622d2495-5942-440f-a619-cb4369c8a090",
+      "botId": "10bb16e0-89af-4080-b4ba-e875a2270c15",
       "scopes": [
         "personal"
       ],
