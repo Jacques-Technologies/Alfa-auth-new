@@ -7,7 +7,7 @@ const { CardFactory } = require('botbuilder');
 require('dotenv').config();
 
 /**
- * Clase para gestionar la integración con OpenAI y herramientas (incluye tarjetas dinámicas)
+ * Clase para gestionar la integración con OpenAI y herramientas (incluye tarjetas dinámicas y manejo estricto de vacaciones)
  */
 class OpenAIService {
     constructor() {
@@ -58,7 +58,7 @@ class OpenAIService {
     }
 
     /**
-     * Define las herramientas disponibles para el Agente (incluye generación de tarjetas)
+     * Define las herramientas disponibles para el Agente (incluye generación de tarjetas y manejo estricto de vacaciones)
      * @returns {Array} Lista de herramientas en formato OpenAI
      */
     defineTools() {
@@ -74,22 +74,40 @@ class OpenAIService {
                     }
                 }
             },
-            // NUEVAS HERRAMIENTAS PARA TARJETAS DINÁMICAS
+            // HERRAMIENTA MEJORADA PARA VACACIONES MÁS ESTRICTA
             {
                 type: "function",
                 function: {
                     name: "generar_tarjeta_vacaciones",
-                    description: "Genera tarjetas para solicitudes de vacaciones cuando el usuario quiere solicitar, consultar o gestionar sus vacaciones. Usar cuando mencionen: vacaciones, días libres, permisos, ausentarse, tiempo libre, descanso.",
+                    description: "Genera tarjetas para solicitudes de vacaciones. USAR SOLO cuando el usuario sea específico sobre qué quiere hacer con vacaciones.",
                     parameters: {
                         type: "object",
                         properties: {
                             tipo_solicitud: {
                                 type: "string",
-                                enum: ["consultar", "solicitar", "simular", "todas"],
-                                description: "Tipo de operación de vacaciones solicitada"
+                                enum: ["consultar", "solicitar", "simular", "informacion_general"],
+                                description: "Tipo específico de operación de vacaciones"
                             }
                         },
                         required: ["tipo_solicitud"]
+                    }
+                }
+            },
+            // NUEVA HERRAMIENTA PARA GUIAR PROCESO DE SOLICITUD
+            {
+                type: "function",
+                function: {
+                    name: "guiar_proceso_vacaciones",
+                    description: "Guía al usuario cuando quiere solicitar vacaciones pero no especifica el tipo. Pregunta qué tipo de vacaciones necesita.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            mensaje_usuario: {
+                                type: "string",
+                                description: "Mensaje original del usuario sobre vacaciones"
+                            }
+                        },
+                        required: ["mensaje_usuario"]
                     }
                 }
             },
@@ -157,7 +175,7 @@ class OpenAIService {
             }
         ];
         
-        // Añadir herramientas existentes
+        // Añadir herramientas de búsqueda
         if (this.searchAvailable) {
             tools.push(
                 {
@@ -177,7 +195,6 @@ class OpenAIService {
                         }
                     }
                 },
-                // NUEVA HERRAMIENTA DE BÚSQUEDA VECTORIAL
                 {
                     type: "function",
                     function: {
@@ -198,7 +215,7 @@ class OpenAIService {
             );
         }
         
-        // Añadir otras herramientas existentes (comedor, directorio, etc.)
+        // Añadir herramientas de Bubble
         if (process.env.TOKEN_BUBBLE) {
             tools.push(
                 {
@@ -534,7 +551,55 @@ class OpenAIService {
     }
 
     /**
-     * Procesa una consulta con el agente de OpenAI (ahora incluye respuestas con tarjetas)
+     * Detecta el tipo específico de consulta de vacaciones
+     * @param {string} mensaje - Mensaje del usuario
+     * @returns {Object} - Tipo de consulta y parámetros
+     */
+    _detectarTipoVacaciones(mensaje) {
+        const mensajeLower = mensaje.toLowerCase();
+        
+        // Palabras clave para diferentes tipos
+        const keywords = {
+            matrimonio: ['matrimonio', 'boda', 'casarse', 'luna de miel', 'esposa', 'esposo'],
+            nacimiento: ['nacimiento', 'bebé', 'hijo', 'hija', 'paternidad', 'maternidad', 'parto'],
+            consultar: ['ver mis', 'consultar', 'revisar', 'estado de', 'mis solicitudes'],
+            simular: ['simular', 'verificar', 'probar', 'calcular', 'disponibilidad'],
+            solicitar: ['solicitar', 'pedir', 'quiero', 'necesito'],
+            informacion: ['información', 'info', 'tipos', 'qué vacaciones', 'cuáles']
+        };
+        
+        // Verificar tipos específicos primero
+        if (keywords.matrimonio.some(word => mensajeLower.includes(word))) {
+            return { tipo: 'matrimonio', especifico: true };
+        }
+        
+        if (keywords.nacimiento.some(word => mensajeLower.includes(word))) {
+            return { tipo: 'nacimiento', especifico: true };
+        }
+        
+        if (keywords.consultar.some(word => mensajeLower.includes(word))) {
+            return { tipo: 'consultar', especifico: true };
+        }
+        
+        if (keywords.simular.some(word => mensajeLower.includes(word))) {
+            return { tipo: 'simular', especifico: true };
+        }
+        
+        // Verificar solicitud general (requiere aclaración)
+        if (keywords.solicitar.some(word => mensajeLower.includes(word))) {
+            return { tipo: 'solicitar', especifico: false };
+        }
+        
+        // Información general
+        if (keywords.informacion.some(word => mensajeLower.includes(word))) {
+            return { tipo: 'informacion_general', especifico: true };
+        }
+        
+        return { tipo: 'general', especifico: false };
+    }
+
+    /**
+     * Procesa una consulta con el agente de OpenAI (ahora incluye respuestas con tarjetas y manejo estricto de vacaciones)
      * @param {string} mensaje - Mensaje del usuario
      * @param {Array} historial - Historial de conversación
      * @returns {Object} - Respuesta del agente (puede incluir tarjetas)
@@ -652,33 +717,56 @@ class OpenAIService {
     }
 
     /**
-     * Formatea historial de conversación al formato de OpenAI
+     * Formatea historial de conversación al formato de OpenAI con manejo estricto de vacaciones
      * @param {Array} historial - Historial desde CosmosDB o memoria
      * @returns {Array} - Mensajes en formato OpenAI
      */
     formatearHistorial(historial) {
-        // Mensaje de sistema inicial con instrucciones más claras
+        // Mensaje de sistema inicial con instrucciones MÁS ESTRICTAS para vacaciones
         const mensajes = [{
             role: "system",
             content: `Eres un asistente inteligente que ayuda a los empleados de Alfa Corporation. 
 
-INSTRUCCIONES PARA TARJETAS DINÁMICAS:
-- Cuando el usuario mencione vacaciones, días libres, solicitar permisos: USA generar_tarjeta_vacaciones
-- Cuando pregunten por su información personal, perfil: USA generar_tarjeta_empleado  
-- Cuando pregunten por recibos, nómina, periodos: USA generar_tarjeta_recibos
-- Cuando mencionen matrimonio, boda, casarse: USA generar_tarjeta_matrimonio
-- Cuando mencionen bebé, nacimiento, paternidad: USA generar_tarjeta_nacimiento
-- Cuando quieran autorizar, rechazar, cancelar solicitudes: USA generar_tarjeta_autorizacion
+INSTRUCCIONES ESTRICTAS PARA VACACIONES:
 
-EJEMPLOS DE USO DE TARJETAS:
-- "quiero solicitar vacaciones" → generar_tarjeta_vacaciones(tipo_solicitud: "solicitar")
-- "ver mis vacaciones" → generar_tarjeta_vacaciones(tipo_solicitud: "consultar")  
-- "mi información personal" → generar_tarjeta_empleado()
-- "mis recibos de pago" → generar_tarjeta_recibos()
-- "permiso por matrimonio" → generar_tarjeta_matrimonio()
-- "autorizar una solicitud" → generar_tarjeta_autorizacion(accion: "autorizar")
+🔒 REGLAS DE VACACIONES:
+1. Si preguntan sobre vacaciones de forma GENERAL: 
+   - Explica brevemente los tipos de vacaciones disponibles
+   - SIEMPRE genera la tarjeta con tipo "informacion_general"
+   - NO des información específica sin usar la tarjeta
 
-INSTRUCCIONES PARA OTRAS HERRAMIENTAS:
+2. Si quieren SOLICITAR vacaciones:
+   - OBLIGATORIO: Preguntar primero el tipo de vacación
+   - Tipos disponibles: Regular, Matrimonio, Nacimiento
+   - Solo después de definir el tipo, mostrar la tarjeta correspondiente
+
+3. Si quieren CONSULTAR sus vacaciones:
+   - Usar generar_tarjeta_vacaciones(tipo_solicitud: "consultar")
+   - Mostrar todas las opciones de consulta disponibles
+
+4. Si quieren SIMULAR vacaciones:
+   - Usar generar_tarjeta_vacaciones(tipo_solicitud: "simular")
+   - Explicar que es solo para verificar disponibilidad
+
+PATRONES DE DETECCIÓN MÁS ESTRICTOS:
+- "vacaciones" + "información" = tipo "informacion_general"
+- "solicitar vacaciones" SIN especificar tipo = usar guiar_proceso_vacaciones
+- "pedir vacaciones" SIN especificar tipo = usar guiar_proceso_vacaciones
+- "matrimonio" + "vacaciones" = generar_tarjeta_matrimonio()
+- "nacimiento" + "vacaciones" = generar_tarjeta_nacimiento()
+- "ver mis vacaciones" = generar_tarjeta_vacaciones(tipo_solicitud: "consultar")
+
+EJEMPLOS DE RESPUESTAS ESTRICTAS:
+❌ Usuario: "quiero información sobre vacaciones"
+✅ Respuesta: generar_tarjeta_vacaciones(tipo_solicitud: "informacion_general")
+
+❌ Usuario: "quiero solicitar vacaciones"  
+✅ Respuesta: guiar_proceso_vacaciones(mensaje_usuario: "quiero solicitar vacaciones")
+
+❌ Usuario: "vacaciones por matrimonio"
+✅ Respuesta: generar_tarjeta_matrimonio()
+
+OTRAS HERRAMIENTAS (sin cambios):
 - Solo usa "referencias" cuando pidan buscar en documentos específicos
 - Solo usa "buscar_documentos" cuando necesiten información detallada de documentos corporativos
 - Solo usa "comedor" cuando pregunten por menú del día
@@ -693,9 +781,8 @@ Siempre responde en español de manera amable y profesional.
 Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yyyy')}`
         }];
 
-        // Convertir mensajes del historial, limitando la cantidad para evitar tokens excesivos
+        // Convertir mensajes del historial (sin cambios)
         if (historial && historial.length > 0) {
-            // Tomar solo los últimos 10 mensajes para evitar exceder límites de tokens
             const recentHistory = historial.slice(-10);
             
             recentHistory.forEach(item => {
@@ -773,7 +860,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
     }
 
     /**
-     * Ejecuta una herramienta específica (incluye generación de tarjetas)
+     * Ejecuta una herramienta específica (incluye generación de tarjetas y manejo estricto de vacaciones)
      * @param {string} nombre - Nombre de la herramienta
      * @param {Object} parametros - Parámetros para la herramienta
      * @returns {any} - Resultado de la ejecución
@@ -783,9 +870,12 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             case 'FechaHoy':
                 return DateTime.now().setZone('America/Mexico_City').toISODate();
                 
-            // NUEVAS HERRAMIENTAS PARA TARJETAS DINÁMICAS
+            // HERRAMIENTAS DE VACACIONES MEJORADAS
             case 'generar_tarjeta_vacaciones':
                 return this.generarTarjetaVacaciones(parametros.tipo_solicitud);
+                
+            case 'guiar_proceso_vacaciones':
+                return this.ejecutarGuiarProcesoVacaciones(parametros.mensaje_usuario);
                 
             case 'generar_tarjeta_empleado':
                 return this.generarTarjetaEmpleado();
@@ -832,28 +922,257 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         }
     }
 
-    // MÉTODOS PARA GENERAR TARJETAS DINÁMICAS
+    // MÉTODOS PARA GENERAR TARJETAS DINÁMICAS CON MANEJO ESTRICTO
 
     /**
-     * Genera tarjetas para solicitudes de vacaciones
+     * Ejecuta la guía de proceso de vacaciones
+     * @param {string} mensajeUsuario - Mensaje original del usuario
+     * @returns {Object} - Resultado con tarjeta guía
+     */
+    async ejecutarGuiarProcesoVacaciones(mensajeUsuario) {
+        return {
+            textContent: `🏖️ **Proceso de Solicitud de Vacaciones**
+
+Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
+
+**📋 Tipos disponibles:**
+
+**1. 🌴 Vacaciones Regulares**
+   • Días de descanso anuales
+   • Puedes elegir fechas específicas
+   • Incluye opción de simulación
+
+**2. 💍 Vacaciones por Matrimonio**
+   • Días especiales por matrimonio
+   • Requiere fecha de la boda
+   • Beneficio especial para empleados
+
+**3. 👶 Vacaciones por Nacimiento**
+   • Días por paternidad/maternidad
+   • Requiere fecha de nacimiento
+   • Beneficio familiar
+
+**¿Cuál de estos tipos necesitas?** 
+
+Responde con:
+• "Vacaciones regulares"
+• "Por matrimonio" 
+• "Por nacimiento"
+
+O especifica directamente lo que necesitas y te mostraré las opciones correspondientes.`,
+            
+            // Generar tarjeta informativa
+            card: this.createVacationGuideCard()
+        };
+    }
+
+    /**
+     * Crear tarjeta guía para tipos de vacaciones
+     * @returns {Object} - Tarjeta adaptativa guía
+     */
+    createVacationGuideCard() {
+        const card = {
+            type: 'AdaptiveCard',
+            $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+            version: '1.3',
+            body: [
+                {
+                    type: 'TextBlock',
+                    text: '🏖️ Tipos de Vacaciones',
+                    size: 'Large',
+                    weight: 'Bolder',
+                    color: 'Accent',
+                    horizontalAlignment: 'Center'
+                },
+                {
+                    type: 'TextBlock',
+                    text: 'Selecciona el tipo de vacaciones que necesitas:',
+                    wrap: true,
+                    spacing: 'Medium'
+                },
+                {
+                    type: 'ColumnSet',
+                    columns: [
+                        {
+                            type: 'Column',
+                            width: 'auto',
+                            items: [
+                                {
+                                    type: 'TextBlock',
+                                    text: '🌴',
+                                    size: 'ExtraLarge'
+                                }
+                            ]
+                        },
+                        {
+                            type: 'Column',
+                            width: 'stretch',
+                            items: [
+                                {
+                                    type: 'TextBlock',
+                                    text: 'Vacaciones Regulares',
+                                    weight: 'Bolder'
+                                },
+                                {
+                                    type: 'TextBlock',
+                                    text: 'Días de descanso anuales con fechas flexibles',
+                                    wrap: true,
+                                    isSubtle: true
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    type: 'ColumnSet',
+                    columns: [
+                        {
+                            type: 'Column',
+                            width: 'auto',
+                            items: [
+                                {
+                                    type: 'TextBlock',
+                                    text: '💍',
+                                    size: 'ExtraLarge'
+                                }
+                            ]
+                        },
+                        {
+                            type: 'Column',
+                            width: 'stretch',
+                            items: [
+                                {
+                                    type: 'TextBlock',
+                                    text: 'Por Matrimonio',
+                                    weight: 'Bolder'
+                                },
+                                {
+                                    type: 'TextBlock',
+                                    text: 'Días especiales por matrimonio',
+                                    wrap: true,
+                                    isSubtle: true
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    type: 'ColumnSet',
+                    columns: [
+                        {
+                            type: 'Column',
+                            width: 'auto',
+                            items: [
+                                {
+                                    type: 'TextBlock',
+                                    text: '👶',
+                                    size: 'ExtraLarge'
+                                }
+                            ]
+                        },
+                        {
+                            type: 'Column',
+                            width: 'stretch',
+                            items: [
+                                {
+                                    type: 'TextBlock',
+                                    text: 'Por Nacimiento',
+                                    weight: 'Bolder'
+                                },
+                                {
+                                    type: 'TextBlock',
+                                    text: 'Días por paternidad/maternidad',
+                                    wrap: true,
+                                    isSubtle: true
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            actions: [
+                {
+                    type: 'Action.Submit',
+                    title: '🌴 Vacaciones Regulares',
+                    data: {
+                        action: 'Solicitar Vacaciones Regulares',
+                        vacation_type: 'regular'
+                    }
+                },
+                {
+                    type: 'Action.Submit',
+                    title: '💍 Por Matrimonio',
+                    data: {
+                        action: 'Solicitar Vacaciones Matrimonio',
+                        vacation_type: 'matrimonio'
+                    }
+                },
+                {
+                    type: 'Action.Submit',
+                    title: '👶 Por Nacimiento',
+                    data: {
+                        action: 'Solicitar Vacaciones Nacimiento',
+                        vacation_type: 'nacimiento'
+                    }
+                }
+            ]
+        };
+
+        return CardFactory.adaptiveCard(card);
+    }
+
+    /**
+     * Genera tarjetas para solicitudes de vacaciones con manejo estricto
      * @param {string} tipoSolicitud - Tipo de solicitud de vacaciones
      * @returns {Object} - Resultado con tarjeta(s)
      */
     generarTarjetaVacaciones(tipoSolicitud) {
         const actions = [];
+        let textContent = '';
         
         switch (tipoSolicitud) {
+            case 'informacion_general':
+                textContent = `📚 **Información General de Vacaciones**
+
+**Tipos de vacaciones disponibles en Alfa Corporation:**
+
+🌴 **Vacaciones Regulares**
+• Días anuales de descanso
+• Planificación flexible de fechas
+• Incluye simulación de disponibilidad
+
+💍 **Vacaciones por Matrimonio**
+• Beneficio especial para empleados
+• Requiere comprobante de matrimonio
+• Días adicionales a los regulares
+
+👶 **Vacaciones por Nacimiento**
+• Paternidad/Maternidad
+• Días por nacimiento de hijo(a)
+• Beneficio familiar
+
+**Opciones de gestión:**`;
+                
+                // Agregar todas las acciones de consulta
+                actions.push(this.apiActions.vacaciones.consultar_solicitudes);
+                actions.push(this.apiActions.vacaciones.consultar_por_id);
+                actions.push(this.apiActions.vacaciones.dependientes);
+                break;
+                
             case 'consultar':
+                textContent = `🔍 **Consultar Mis Vacaciones**\n\nAccede a la información de tus solicitudes:`;
                 actions.push(this.apiActions.vacaciones.consultar_solicitudes);
                 actions.push(this.apiActions.vacaciones.consultar_por_id);
                 actions.push(this.apiActions.vacaciones.dependientes);
                 break;
                 
             case 'solicitar':
+                textContent = `🎯 **Solicitar Vacaciones Regulares**\n\nCompleta tu solicitud de vacaciones:`;
                 actions.push(this.apiActions.vacaciones.solicitar_vacaciones);
                 break;
                 
             case 'simular':
+                textContent = `🧮 **Simular Solicitud de Vacaciones**\n\nVerifica disponibilidad antes de solicitar:`;
                 actions.push({
                     ...this.apiActions.vacaciones.solicitar_vacaciones,
                     title: 'Simular Solicitud de Vacaciones',
@@ -864,18 +1183,17 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 });
                 break;
                 
-            case 'todas':
             default:
+                textContent = `🏖️ **Gestión de Vacaciones**\n\nSelecciona la opción que necesitas:`;
                 actions.push(this.apiActions.vacaciones.consultar_solicitudes);
                 actions.push(this.apiActions.vacaciones.solicitar_vacaciones);
-                actions.push(this.apiActions.vacaciones.consultar_por_id);
                 break;
         }
         
         const cards = actions.map(action => this.createAdaptiveCard(action));
         
         return {
-            textContent: `🏖️ **Gestión de Vacaciones**\n\nHe preparado las acciones que necesitas para gestionar tus vacaciones:`,
+            textContent: textContent,
             card: cards.length === 1 ? cards[0] : cards
         };
     }
@@ -1108,7 +1426,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         }
     }
 
-    // MÉTODOS EXISTENTES (sin cambios)
+    // MÉTODOS EXISTENTES (con pequeñas mejoras)
 
     /**
      * Ejecuta búsqueda de referencias en documentos
@@ -1472,7 +1790,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             console.log(`Buscando incidentes con query: ${query}`);
             
             const res = await axios.get(
-                'https://api.supporttsmx.com.mx/TSMX/SNOW/Incident/GetIncidentKeyListQuery',
+                'https://api.supporttsmx.com.mx/TSMX/SNOW/Incident/GetIncidentKeyList',
                 {
                     headers: { Authorization: `Bearer ${process.env.TOKEN_API}` },
                     httpsAgent: new https.Agent({ rejectUnauthorized: false }),

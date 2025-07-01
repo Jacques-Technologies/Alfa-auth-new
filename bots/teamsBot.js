@@ -1,4 +1,4 @@
-// teamsBot.js - Versión actualizada con tarjetas dinámicas desde OpenAI
+// teamsBot.js - Versión completa con manejo estricto de vacaciones y tarjetas dinámicas
 
 const { DialogBot } = require('./dialogBot');
 const { CardFactory } = require('botbuilder');
@@ -9,8 +9,8 @@ const openaiService = require('../services/openaiService');
 const conversationService = require('../services/conversationService');
 
 /**
- * TeamsBot class extends DialogBot to handle Teams-specific activities and OpenAI integration.
- * Ahora incluye manejo de tarjetas dinámicas generadas por OpenAI.
+ * TeamsBot class extends DialogBot to handle Teams-specific activities, OpenAI integration, and strict vacation management.
+ * Incluye manejo de tarjetas dinámicas generadas por OpenAI y proceso guiado para vacaciones.
  */
 class TeamsBot extends DialogBot {
   /**
@@ -194,7 +194,40 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Maneja todos los mensajes entrantes con lógica de autenticación
+   * Detecta si una consulta de vacaciones es ambigua y requiere aclaración
+   * @param {string} message - Mensaje del usuario
+   * @returns {boolean} - Si la consulta requiere aclaración
+   * @private
+   */
+  _isAmbiguousVacationQuery(message) {
+    const lowerMessage = message.toLowerCase();
+    
+    // Frases que indican solicitud ambigua de vacaciones
+    const ambiguousPatterns = [
+      'quiero vacaciones',
+      'solicitar vacaciones',
+      'pedir vacaciones',
+      'necesito vacaciones',
+      'tramitar vacaciones'
+    ];
+    
+    // Palabras que especifican el tipo (si las contiene, no es ambigua)
+    const specificWords = [
+      'matrimonio', 'boda', 'casarse',
+      'nacimiento', 'bebé', 'paternidad', 'maternidad',
+      'consultar', 'ver mis', 'estado de',
+      'simular', 'verificar', 'información', 'info', 'tipos'
+    ];
+    
+    // Es ambigua si contiene patrones ambiguos pero no palabras específicas
+    const hasAmbiguousPattern = ambiguousPatterns.some(pattern => lowerMessage.includes(pattern));
+    const hasSpecificWord = specificWords.some(word => lowerMessage.includes(word));
+    
+    return hasAmbiguousPattern && !hasSpecificWord;
+  }
+
+  /**
+   * Maneja todos los mensajes entrantes con lógica de autenticación y manejo estricto de vacaciones
    * @param {TurnContext} context - Contexto del turno
    * @param {Function} next - Siguiente middleware
    */
@@ -231,7 +264,31 @@ class TeamsBot extends DialogBot {
       } else {
         // Mensajes generales - requieren autenticación para OpenAI
         if (isAuthenticated) {
-          await this.processOpenAIMessage(context, context.activity.text, userId, conversationId);
+          // NUEVO: Verificar si es una consulta ambigua de vacaciones
+          if (this._isAmbiguousVacationQuery(context.activity.text)) {
+            console.log('TeamsBot: Detectada consulta ambigua de vacaciones');
+            
+            // Generar respuesta con tarjeta guía
+            const guidePrompt = "El usuario quiere solicitar vacaciones pero no especifica el tipo. Usa la herramienta guiar_proceso_vacaciones.";
+            try {
+              const response = await this.openaiService.procesarMensaje(guidePrompt, []);
+              
+              if (response.type === 'card') {
+                if (response.content) {
+                  await context.sendActivity(response.content);
+                }
+                await context.sendActivity({ attachments: [response.card] });
+              } else {
+                await context.sendActivity(response.content || response);
+              }
+            } catch (error) {
+              console.error('TeamsBot: Error procesando consulta ambigua:', error);
+              await context.sendActivity('🏖️ Para solicitar vacaciones, necesito saber qué tipo necesitas:\n\n• **Vacaciones regulares** - días anuales\n• **Por matrimonio** - días especiales por boda\n• **Por nacimiento** - paternidad/maternidad\n\n¿Cuál necesitas?');
+            }
+          } else {
+            // Procesamiento normal con OpenAI
+            await this.processOpenAIMessage(context, context.activity.text, userId, conversationId);
+          }
         } else {
           await context.sendActivity('🔒 Necesitas iniciar sesión para usar el asistente. Escribe `login` para autenticarte.');
         }
@@ -337,6 +394,8 @@ class TeamsBot extends DialogBot {
       // Limpiar memoria
       this.authenticatedUsers.delete(userId);
 
+      await context.sendActivity('✅ **Sesión cerrada exitosamente**\n\nEscribe `login` para iniciar sesión nuevamente cuando desees usar el bot.');
+
     } catch (error) {
       console.error('Error en logout:', error);
       await context.sendActivity('❌ Error al cerrar sesión. Intenta nuevamente.');
@@ -431,7 +490,79 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
   }
 
   /**
-   * Maneja el submit de las tarjetas adaptativas con token OAuth automático
+   * Maneja submits específicos de la tarjeta guía de vacaciones
+   * @param {TurnContext} context - Contexto del turno
+   * @param {Object} submitData - Datos del submit
+   * @returns {boolean} - Si se manejó el submit
+   * @private
+   */
+  async _handleVacationGuideSubmit(context, submitData) {
+    const { vacation_type, action } = submitData;
+    
+    if (!vacation_type) {
+      return false; // No es un submit de la guía de vacaciones
+    }
+    
+    console.log(`TeamsBot: Manejando selección de tipo de vacación: ${vacation_type}`);
+    
+    try {
+      let openaiResponse;
+      
+      switch (vacation_type) {
+        case 'regular':
+          // Procesar solicitud de vacaciones regulares
+          const regularPrompt = "El usuario seleccionó vacaciones regulares. Genera la tarjeta para solicitar vacaciones regulares.";
+          openaiResponse = await this.openaiService.procesarMensaje(regularPrompt, []);
+          break;
+          
+        case 'matrimonio':
+          // Procesar solicitud de vacaciones por matrimonio
+          const matrimonioPrompt = "El usuario seleccionó vacaciones por matrimonio. Genera la tarjeta para vacaciones por matrimonio.";
+          openaiResponse = await this.openaiService.procesarMensaje(matrimonioPrompt, []);
+          break;
+          
+        case 'nacimiento':
+          // Procesar solicitud de vacaciones por nacimiento
+          const nacimientoPrompt = "El usuario seleccionó vacaciones por nacimiento. Genera la tarjeta para vacaciones por nacimiento.";
+          openaiResponse = await this.openaiService.procesarMensaje(nacimientoPrompt, []);
+          break;
+          
+        default:
+          await context.sendActivity('⚠️ Tipo de vacación no reconocido. Por favor, selecciona una opción válida.');
+          return true;
+      }
+      
+      // Enviar respuesta generada por OpenAI
+      if (openaiResponse) {
+        if (openaiResponse.type === 'card') {
+          if (openaiResponse.content) {
+            await context.sendActivity(openaiResponse.content);
+          }
+          
+          if (Array.isArray(openaiResponse.card)) {
+            for (const card of openaiResponse.card) {
+              await context.sendActivity({ attachments: [card] });
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          } else {
+            await context.sendActivity({ attachments: [openaiResponse.card] });
+          }
+        } else {
+          await context.sendActivity(openaiResponse.content || openaiResponse);
+        }
+      }
+      
+      return true; // Se manejó exitosamente
+      
+    } catch (error) {
+      console.error('TeamsBot: Error manejando selección de vacaciones:', error);
+      await context.sendActivity('❌ Error al procesar tu selección de vacaciones. Por favor, intenta nuevamente.');
+      return true;
+    }
+  }
+
+  /**
+   * Maneja el submit de las tarjetas adaptativas con token OAuth automático y manejo de guía de vacaciones
    * @param {TurnContext} context - Contexto del turno
    * @param {Object} submitData - Datos enviados desde la tarjeta
    * @private
@@ -440,6 +571,14 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
     try {
       console.log('TeamsBot: Procesando submit de tarjeta adaptativa');
       console.log('TeamsBot: Datos completos recibidos:', JSON.stringify(submitData, null, 2));
+
+      // NUEVO: Verificar si es un submit de la guía de vacaciones
+      if (submitData.vacation_type) {
+        const handled = await this._handleVacationGuideSubmit(context, submitData);
+        if (handled) {
+          return; // Ya se manejó, no continuar con el procesamiento normal
+        }
+      }
 
       const { action, method, url, ...fieldData } = submitData;
       const userId = context.activity.from.id;
@@ -871,7 +1010,7 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
   }
 
   /**
-   * Procesa mensajes con el servicio de OpenAI (ahora incluye manejo de tarjetas dinámicas)
+   * Procesa mensajes con el servicio de OpenAI (ahora incluye manejo de tarjetas dinámicas y manejo estricto de vacaciones)
    * @param {TurnContext} context - Contexto del turno
    * @param {string} message - Mensaje del usuario
    * @param {string} userId - ID del usuario
