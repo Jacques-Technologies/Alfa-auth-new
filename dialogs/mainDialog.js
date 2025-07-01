@@ -164,8 +164,8 @@ class MainDialog extends LogoutDialog {
                 }
             }
 
-            // CORREGIDO: NO enviar mensaje informativo aquí para evitar duplicaciones
-            // El mensaje ya se envía desde TeamsBot._handleLoginRequest
+            // CORREGIDO: Enviar mensaje informativo SOLO aquí, una vez
+            await stepContext.context.sendActivity('🔄 **Iniciando autenticación...**\n\nTe redirigiremos al sistema de login corporativo.');
             
             // Iniciar prompt OAuth directamente
             return await stepContext.beginDialog(OAUTH_PROMPT);
@@ -235,12 +235,12 @@ class MainDialog extends LogoutDialog {
                         return await stepContext.next(tokenResponse);
                     } else {
                         console.error(`MainDialog: Error al marcar usuario ${userId} como autenticado`);
-                        await stepContext.context.sendActivity('❌ **Error interno**\n\nNo se pudo completar el proceso de autenticación. Por favor, contacta al administrador.');
+                        await stepContext.context.sendActivity('❌ **Error al completar autenticación**\n\nIntenta escribir `login` nuevamente.');
                         return await stepContext.endDialog();
                     }
                 } else {
-                    console.error('MainDialog: No se pudo obtener la instancia del bot para marcar usuario como autenticado');
-                    await stepContext.context.sendActivity('❌ **Error de configuración**\n\nHay un problema con la configuración del bot. Por favor, contacta al administrador.');
+                    console.error('MainDialog: No se pudo obtener la instancia del bot');
+                    await stepContext.context.sendActivity('❌ **Error del sistema**\n\nIntenta escribir `login` nuevamente o contacta al administrador.');
                     return await stepContext.endDialog();
                 }
             } else {
