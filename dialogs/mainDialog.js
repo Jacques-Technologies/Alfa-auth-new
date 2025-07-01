@@ -6,48 +6,29 @@ const MAIN_WATERFALL_DIALOG = 'MainWaterfallDialog';
 const OAUTH_PROMPT = 'OAuthPrompt';
 
 /**
- * MainDialog class that extends LogoutDialog to handle the main dialog flow with enhanced authentication
- * and improved error handling for the vacation management system.
+ * MainDialog class that extends LogoutDialog to handle the main dialog flow.
  */
 class MainDialog extends LogoutDialog {
     /**
      * Creates an instance of MainDialog.
+     * @param {string} id - The dialog ID.
+     * @param {string} connectionName - The connection name for the OAuth provider.
      */
     constructor() {
-        super(MAIN_DIALOG, process.env.connectionName || process.env.OAUTH_CONNECTION_NAME);
+        super(MAIN_DIALOG, process.env.connectionName);
 
-        // Validar configuración OAuth
-        const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
-        if (!connectionName) {
-            console.error('MainDialog: ERROR - No se ha configurado connectionName en las variables de entorno');
-            throw new Error('Configuración OAuth faltante: connectionName es requerido');
-        }
-
-        console.log(`MainDialog: Inicializando con connectionName: ${connectionName}`);
-
-        // Configurar OAuth Prompt con configuración mejorada
         this.addDialog(new OAuthPrompt(OAUTH_PROMPT, {
-            connectionName: connectionName,
-            text: '🔐 **Autenticación Requerida**\n\nPara acceder a las funciones del bot, necesitas iniciar sesión con tu cuenta corporativa.',
-            title: 'Iniciar Sesión - Alfa Bot',
-            timeout: 300000, // 5 minutos
-            // Configuración adicional para mejor experiencia
-            endOnInvalidMessage: true
+            connectionName: process.env.connectionName,
+            text: 'Este paso es necesario para el módulo de RH',
+            title: 'Iniciar sesión',
+            timeout: 300000
         }));
-
-        // Configurar diálogo principal
         this.addDialog(new WaterfallDialog(MAIN_WATERFALL_DIALOG, [
             this.promptStep.bind(this),
-            this.loginStep.bind(this),
-            this.finalStep.bind(this)
+            this.loginStep.bind(this)
         ]));
 
         this.initialDialogId = MAIN_WATERFALL_DIALOG;
-        
-        // Estado de diálogos activos para evitar duplicados
-        this.activeAuthDialogs = new Set();
-        
-        console.log('MainDialog: Inicializado correctamente');
     }
 
     /**
@@ -57,328 +38,71 @@ class MainDialog extends LogoutDialog {
      * @param {StatePropertyAccessor} accessor - The state property accessor for the dialog state.
      */
     async run(context, accessor) {
-        try {
-            const userId = context.activity.from.id;
-            const dialogKey = `auth-dialog-${userId}`;
-            
-            // Evitar diálogos duplicados
-            if (this.activeAuthDialogs.has(dialogKey)) {
-                console.log(`MainDialog: Diálogo de autenticación ya activo para usuario ${userId}`);
-                return;
-            }
+        const dialogSet = new DialogSet(accessor);
+        dialogSet.add(this);
 
-            const dialogSet = new DialogSet(accessor);
-            dialogSet.add(this);
-
-            const dialogContext = await dialogSet.createContext(context);
-            
-            // Verificar si ya hay un diálogo activo
-            const results = await dialogContext.continueDialog();
-            
-            if (results.status === DialogTurnStatus.empty) {
-                console.log(`MainDialog: Iniciando nuevo diálogo de autenticación para usuario ${userId}`);
-                this.activeAuthDialogs.add(dialogKey);
-                
-                try {
-                    await dialogContext.beginDialog(this.id);
-                } finally {
-                    // Limpiar después de completar o cancelar
-                    this.activeAuthDialogs.delete(dialogKey);
-                }
-            } else {
-                console.log(`MainDialog: Continuando diálogo existente, estado: ${results.status}`);
-                
-                // Limpiar si el diálogo ha terminado
-                if (results.status === DialogTurnStatus.complete || results.status === DialogTurnStatus.cancelled) {
-                    this.activeAuthDialogs.delete(dialogKey);
-                }
-            }
-        } catch (error) {
-            console.error('MainDialog: Error en run():', error.message);
-            
-            // Limpiar estado de error
-            const userId = context.activity.from.id;
-            const dialogKey = `auth-dialog-${userId}`;
-            this.activeAuthDialogs.delete(dialogKey);
-            
-            // Enviar mensaje de error al usuario
-            try {
-                await context.sendActivity('❌ Error durante la autenticación. Por favor, intenta escribir `login` nuevamente.');
-            } catch (sendError) {
-                console.error('MainDialog: Error enviando mensaje de error:', sendError.message);
-            }
-            
-            throw error;
+        const dialogContext = await dialogSet.createContext(context);
+        const results = await dialogContext.continueDialog();
+        if (results.status === DialogTurnStatus.empty) {
+            await dialogContext.beginDialog(this.id);
         }
     }
 
     /**
-     * Prompts the user to sign in with enhanced user experience.
+     * Prompts the user to sign in.
      * @param {WaterfallStepContext} stepContext - The waterfall step context.
      */
     async promptStep(stepContext) {
-        try {
-            const userId = stepContext.context.activity.from.id;
-            console.log(`MainDialog: Iniciando prompt de autenticación para usuario ${userId}`);
-            
-            // Verificar si el usuario ya está autenticado
-            const bot = stepContext.context.turnState.get('bot');
-            if (bot && typeof bot.isUserAuthenticated === 'function') {
-                const isAuthenticated = bot.isUserAuthenticated(userId);
-                if (isAuthenticated) {
-                    console.log(`MainDialog: Usuario ${userId} ya está autenticado, saltando prompt`);
-                    return await stepContext.next(null); // Saltar al siguiente paso
-                }
-            }
-
-            // Enviar mensaje informativo antes del prompt OAuth
-            await stepContext.context.sendActivity('🔄 **Iniciando proceso de autenticación...**\n\nTe redirigiremos a la página de inicio de sesión corporativa.');
-            
-            // Iniciar prompt OAuth
-            return await stepContext.beginDialog(OAUTH_PROMPT);
-        } catch (error) {
-            console.error('MainDialog: Error en promptStep:', error.message);
-            await stepContext.context.sendActivity('❌ Error al iniciar el proceso de autenticación. Por favor, intenta nuevamente.');
-            return await stepContext.endDialog();
-        }
+        return await stepContext.beginDialog(OAUTH_PROMPT);
     }
 
     /**
-     * Handles the login step with comprehensive error handling and user feedback.
+     * Handles the login step.
      * @param {WaterfallStepContext} stepContext - The waterfall step context.
      */
     async loginStep(stepContext) {
-        try {
-            const tokenResponse = stepContext.result;
+        const tokenResponse = stepContext.result;
+        if (tokenResponse && tokenResponse.token) {
+            // Obtener información del usuario del token si es posible
             const userId = stepContext.context.activity.from.id;
             const conversationId = stepContext.context.activity.conversation.id;
             
-            console.log(`MainDialog: Procesando resultado de autenticación para usuario ${userId}`);
-            
-            if (tokenResponse && tokenResponse.token) {
-                console.log(`MainDialog: Token OAuth recibido exitosamente para usuario ${userId}`);
-                
-                // Validar el token antes de proceder
-                const isTokenValid = await this.validateOAuthToken(tokenResponse.token);
-                if (!isTokenValid) {
-                    console.error(`MainDialog: Token OAuth inválido para usuario ${userId}`);
-                    await stepContext.context.sendActivity('❌ **Token de autenticación inválido**\n\nEl token recibido no es válido. Por favor, intenta iniciar sesión nuevamente.');
-                    return await stepContext.endDialog();
+            // Intentar obtener información del usuario desde el token
+            let userName = 'Usuario';
+            try {
+                // Decodificar el token JWT para obtener información básica
+                const tokenParts = tokenResponse.token.split('.');
+                if (tokenParts.length === 3) {
+                    const payload = JSON.parse(Buffer.from(tokenParts[1], 'base64').toString());
+                    userName = payload.name || payload.preferred_username || 'Usuario';
                 }
-                
-                // Intentar obtener información del usuario desde el token
-                let userName = 'Usuario';
-                let userEmail = 'usuario@alfa.com';
-                
-                try {
-                    const userInfo = await this.extractUserInfoFromToken(tokenResponse.token);
-                    userName = userInfo.name || userInfo.preferred_username || 'Usuario';
-                    userEmail = userInfo.email || userInfo.upn || userInfo.preferred_username || 'usuario@alfa.com';
-                    
-                    console.log(`MainDialog: Información de usuario extraída - Nombre: ${userName}, Email: ${userEmail}`);
-                } catch (extractError) {
-                    console.warn('MainDialog: No se pudo extraer información del token:', extractError.message);
-                    // Continuar con valores por defecto
-                }
-
-                // Marcar usuario como autenticado en el bot
-                const bot = stepContext.context.turnState.get('bot');
-                if (bot && typeof bot.setUserAuthenticated === 'function') {
-                    const authSuccess = await bot.setUserAuthenticated(userId, conversationId, {
-                        email: userEmail,
-                        name: userName,
-                        token: tokenResponse.token,
-                        context: stepContext.context
-                    });
-                    
-                    if (authSuccess) {
-                        console.log(`MainDialog: Usuario ${userId} autenticado exitosamente`);
-                        
-                        // Enviar mensaje de bienvenida personalizado
-                        const welcomeMessage = `✅ **¡Bienvenido, ${userName}!**\n\n🎉 Te has autenticado exitosamente en Alfa Bot.\n\n**¿Qué puedes hacer ahora?**\n• Solicitar vacaciones\n• Consultar tu información personal\n• Ver recibos de pago\n• Buscar en documentos\n• Y mucho más...\n\n💬 **Prueba escribiendo**: "quiero solicitar vacaciones"`;
-                        
-                        await stepContext.context.sendActivity(welcomeMessage);
-                        
-                        return await stepContext.next(tokenResponse);
-                    } else {
-                        console.error(`MainDialog: Error al marcar usuario ${userId} como autenticado`);
-                        await stepContext.context.sendActivity('❌ **Error interno**\n\nNo se pudo completar el proceso de autenticación. Por favor, contacta al administrador.');
-                        return await stepContext.endDialog();
-                    }
-                } else {
-                    console.error('MainDialog: No se pudo obtener la instancia del bot para marcar usuario como autenticado');
-                    await stepContext.context.sendActivity('❌ **Error de configuración**\n\nHay un problema con la configuración del bot. Por favor, contacta al administrador.');
-                    return await stepContext.endDialog();
-                }
-            } else {
-                console.warn(`MainDialog: No se recibió token OAuth para usuario ${userId}`);
-                return await stepContext.endDialog();
+            } catch (error) {
+                console.log('No se pudo extraer información del token:', error.message);
             }
-        } catch (error) {
-            console.error('MainDialog: Error crítico en loginStep:', error.message);
-            console.error('MainDialog: Stack trace:', error.stack);
-            
-            await stepContext.context.sendActivity('❌ **Error inesperado**\n\nOcurrió un error durante el proceso de autenticación. Por favor, intenta nuevamente o contacta al administrador si el problema persiste.');
+
+            // Marcar usuario como autenticado en el bot
+            const bot = stepContext.context.turnState.get('bot');
+            if (bot && typeof bot.setUserAuthenticated === 'function') {
+                const authSuccess = await bot.setUserAuthenticated(userId, conversationId, {
+                    email: userName,
+                    name: userName,
+                    token: tokenResponse.token,
+                    context: stepContext.context
+                });
+                
+                if (authSuccess) {
+                    console.log(`Usuario ${userId} autenticado exitosamente en MainDialog`);
+                }
+            }
+
+            // Terminar el diálogo sin preguntar por el token
             return await stepContext.endDialog();
         }
-    }
-
-    /**
-     * Final step of the authentication dialog
-     * @param {WaterfallStepContext} stepContext - The waterfall step context.
-     */
-    async finalStep(stepContext) {
-        try {
-            const tokenResponse = stepContext.result;
-            const userId = stepContext.context.activity.from.id;
-            
-            if (tokenResponse && tokenResponse.token) {
-                console.log(`MainDialog: Autenticación completada exitosamente para usuario ${userId}`);
-                
-                // Enviar mensaje final de confirmación
-                await stepContext.context.sendActivity('🚀 **¡Listo para ayudarte!**\n\nYa puedes usar todas las funciones del bot. Escribe tu pregunta o solicitud.');
-            } else {
-                console.log(`MainDialog: Finalizando diálogo sin autenticación para usuario ${userId}`);
-            }
-            
-            // Finalizar el diálogo
-            return await stepContext.endDialog(tokenResponse);
-        } catch (error) {
-            console.error('MainDialog: Error en finalStep:', error.message);
-            return await stepContext.endDialog();
-        }
-    }
-
-    /**
-     * Validates an OAuth token by making a test request
-     * @param {string} token - The OAuth token to validate
-     * @returns {boolean} - Whether the token is valid
-     * @private
-     */
-    async validateOAuthToken(token) {
-        try {
-            if (!token || typeof token !== 'string') {
-                return false;
-            }
-
-            // Hacer una llamada simple para verificar el token
-            const axios = require('axios');
-            const response = await axios.get(
-                'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/empleado',
-                {
-                    headers: {
-                        'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`
-                    },
-                    timeout: 5000
-                }
-            );
-            
-            return response.status === 200;
-        } catch (error) {
-            if (error.response && error.response.status === 401) {
-                console.log('MainDialog: Token OAuth inválido o expirado');
-                return false;
-            }
-            
-            // Para otros errores, asumir que el token podría ser válido
-            console.warn('MainDialog: Error validando token (asumiendo válido):', error.message);
-            return true;
-        }
-    }
-
-    /**
-     * Extracts user information from an OAuth JWT token
-     * @param {string} token - The OAuth JWT token
-     * @returns {Object} - User information extracted from token
-     * @private
-     */
-    async extractUserInfoFromToken(token) {
-        try {
-            if (!token || typeof token !== 'string') {
-                throw new Error('Token inválido');
-            }
-
-            // Intentar decodificar el token JWT
-            const tokenParts = token.split('.');
-            if (tokenParts.length !== 3) {
-                throw new Error('Formato de token JWT inválido');
-            }
-
-            // Decodificar el payload (segunda parte del JWT)
-            const payload = JSON.parse(Buffer.from(tokenParts[1], 'base64').toString());
-            
-            console.log('MainDialog: Información extraída del token:', {
-                name: payload.name,
-                email: payload.email,
-                upn: payload.upn,
-                preferred_username: payload.preferred_username
-            });
-
-            return {
-                name: payload.name,
-                email: payload.email,
-                upn: payload.upn,
-                preferred_username: payload.preferred_username,
-                sub: payload.sub,
-                oid: payload.oid
-            };
-        } catch (error) {
-            console.warn('MainDialog: Error extrayendo información del token:', error.message);
-            throw error;
-        }
-    }
-
-    /**
-     * Gets authentication statistics for monitoring
-     * @returns {Object} - Authentication statistics
-     */
-    getAuthenticationStats() {
-        return {
-            activeDialogs: this.activeAuthDialogs.size,
-            activeDialogsList: Array.from(this.activeAuthDialogs),
-            connectionName: this.connectionName,
-            dialogId: this.id,
-            timestamp: new Date().toISOString()
-        };
-    }
-
-    /**
-     * Clears all active authentication dialogs (for maintenance)
-     * @returns {number} - Number of dialogs cleared
-     */
-    clearActiveDialogs() {
-        const count = this.activeAuthDialogs.size;
-        this.activeAuthDialogs.clear();
-        console.log(`MainDialog: Limpiados ${count} diálogos de autenticación activos`);
-        return count;
-    }
-
-    /**
-     * Checks if a user has an active authentication dialog
-     * @param {string} userId - The user ID to check
-     * @returns {boolean} - Whether the user has an active dialog
-     */
-    hasActiveDialog(userId) {
-        const dialogKey = `auth-dialog-${userId}`;
-        return this.activeAuthDialogs.has(dialogKey);
-    }
-
-    /**
-     * Manually ends an authentication dialog for a user
-     * @param {string} userId - The user ID
-     * @returns {boolean} - Whether a dialog was ended
-     */
-    endUserDialog(userId) {
-        const dialogKey = `auth-dialog-${userId}`;
-        const hadDialog = this.activeAuthDialogs.has(dialogKey);
-        this.activeAuthDialogs.delete(dialogKey);
         
-        if (hadDialog) {
-            console.log(`MainDialog: Diálogo de autenticación finalizado manualmente para usuario ${userId}`);
-        }
-        
-        return hadDialog;
+        await stepContext.context.sendActivity('❌ **Error de autenticación**\n\nNo se pudo completar el inicio de sesión. Por favor, intenta nuevamente escribiendo `login`.');
+        return await stepContext.endDialog();
     }
+
 }
 
 module.exports.MainDialog = MainDialog;
