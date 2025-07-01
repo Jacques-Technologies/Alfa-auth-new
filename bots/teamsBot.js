@@ -242,12 +242,20 @@ class TeamsBot extends DialogBot {
       const conversationId = context.activity.conversation.id;
       const text = (context.activity.text || '').trim().toLowerCase();
 
-      // NUEVO: Evitar procesamiento duplicado
+      // NUEVO: Evitar procesamiento duplicado MÁS ESTRICTO
       const processKey = `${userId}-${Date.now()}`;
       if (this.activeProcesses.has(userId)) {
-        console.log(`TeamsBot: Procesamiento ya activo para usuario ${userId}, ignorando`);
+        console.log(`TeamsBot: Procesamiento ya activo para usuario ${userId}, ignorando mensaje`);
         return await next();
       }
+      
+      // NUEVO: También verificar si hay diálogo OAuth activo
+      const dialogKey = `auth-${userId}`;
+      if (this.activeDialogs.has(dialogKey)) {
+        console.log(`TeamsBot: Diálogo OAuth activo para usuario ${userId}, ignorando mensaje`);
+        return await next();
+      }
+
       this.activeProcesses.set(userId, processKey);
 
       try {
@@ -376,6 +384,13 @@ class TeamsBot extends DialogBot {
       return;
     }
     
+    // CORREGIDO: Verificar si hay proceso activo también
+    if (this.activeProcesses.has(userId)) {
+      console.log(`TeamsBot: Proceso general ya activo para usuario ${userId}`);
+      await context.sendActivity('⏳ Ya hay un proceso activo. Espera un momento e intenta nuevamente.');
+      return;
+    }
+    
     // CORREGIDO: Verificar si el usuario ya está autenticado
     const authData = await this.authState.get(context, {});
     const isAuthenticated = authData[userId]?.authenticated === true;
@@ -386,27 +401,31 @@ class TeamsBot extends DialogBot {
       return;
     }
     
+    // Marcar como activo ANTES de ejecutar
     this.activeDialogs.add(dialogKey);
 
     try {
       const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
       
       if (!connectionName) {
-        await context.sendActivity('❌ **Error de configuración**: No se encontró la configuración de autenticación. Contacta al administrador.');
+        console.error('TeamsBot: connectionName no configurado');
+        await context.sendActivity('❌ **Error de configuración OAuth**\n\nContacta al administrador del sistema.');
         return;
       }
 
-      // CORREGIDO: Solo enviar mensaje informativo UNA vez
-      await context.sendActivity('🔄 **Iniciando autenticación...**\n\nTe mostraré la tarjeta de login a continuación.');
+      console.log(`TeamsBot: Ejecutando diálogo OAuth para usuario ${userId}`);
       
-      // CORREGIDO: Solo ejecutar el diálogo, no crear tarjeta manual
+      // CORREGIDO: Solo ejecutar el diálogo, sin mensajes previos
+      // El MainDialog ya maneja todos los mensajes informativos
       await this.dialog.run(context, this.dialogState);
       
     } catch (error) {
       console.error('TeamsBot: Error en _handleLoginRequest:', error);
       await context.sendActivity('❌ Error al iniciar el proceso de autenticación. Por favor, intenta nuevamente.');
     } finally {
-      this.activeDialogs.delete(dialogKey);
+      // IMPORTANTE: Limpiar SOLO si el diálogo terminó completamente
+      // No limpiar aquí ya que el diálogo puede estar en progreso
+      console.log(`TeamsBot: Manteniendo diálogo activo para usuario ${userId}`);
     }
   }
 
@@ -703,31 +722,51 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
       const userId = context.activity.from.id;
       const dialogKey = `auth-${userId}`;
 
-      console.log(`TeamsBot: Actividad invoke recibida: ${activityName}`);
+      console.log(`TeamsBot: Actividad invoke recibida: ${activityName} para usuario ${userId}`);
+
+      // CORREGIDO: Verificar si ya hay proceso activo antes de continuar
+      if (this.activeProcesses.has(userId)) {
+        console.log(`TeamsBot: Proceso ya activo para invoke ${activityName}, ignorando`);
+        return { status: 200 };
+      }
 
       if (activityName === 'signin/verifyState' || activityName === 'signin/tokenExchange') {
         // CORREGIDO: Solo ejecutar si no hay ya un diálogo activo
         if (!this.activeDialogs.has(dialogKey)) {
           this.activeDialogs.add(dialogKey);
+          this.activeProcesses.set(userId, `invoke-${Date.now()}`);
+          
           try {
+            console.log(`TeamsBot: Ejecutando diálogo OAuth para ${activityName}`);
             await this.dialog.run(context, this.dialogState);
             return { status: 200 };
           } finally {
             this.activeDialogs.delete(dialogKey);
+            this.activeProcesses.delete(userId);
           }
         } else {
-          console.log(`TeamsBot: Diálogo ya activo para invoke ${activityName}`);
+          console.log(`TeamsBot: Diálogo ya activo para invoke ${activityName}, ignorando`);
           return { status: 200 };
         }
       } else if (activityName === 'signin/failure') {
-        await context.sendActivity('❌ Error en autenticación OAuth. Escribe `login` para intentar de nuevo.');
+        // Limpiar estados en caso de fallo
         this.activeDialogs.delete(dialogKey);
+        this.activeProcesses.delete(userId);
+        
+        await context.sendActivity('❌ **Error en autenticación**\n\nHubo un problema con el login. Escribe `login` para intentar de nuevo.');
         return { status: 200 };
       }
 
       return await super.onInvokeActivity(context);
     } catch (error) {
       console.error('TeamsBot: Error en onInvokeActivity:', error);
+      
+      // Limpiar estados en caso de error
+      const userId = context.activity.from.id;
+      const dialogKey = `auth-${userId}`;
+      this.activeDialogs.delete(dialogKey);
+      this.activeProcesses.delete(userId);
+      
       return { status: 500 };
     }
   }
@@ -1178,6 +1217,12 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
       await this.authState.set(context, authData);
       await this.userState.saveChanges(context);
 
+      // NUEVO: Limpiar diálogos activos al completar autenticación exitosa
+      const dialogKey = `auth-${userId}`;
+      this.activeDialogs.delete(dialogKey);
+      this.activeProcesses.delete(userId);
+      console.log(`TeamsBot: Limpiados diálogos activos para usuario autenticado ${userId}`);
+
       // Crear registro de conversación
       try {
         await this.conversationService.createConversation(conversationId, userId);
@@ -1210,7 +1255,13 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
   logoutUser(userId) {
     if (this.authenticatedUsers.has(userId)) {
       this.authenticatedUsers.delete(userId);
-      console.log(`TeamsBot: Usuario ${userId} ha cerrado sesión`);
+      
+      // NUEVO: Limpiar también los diálogos activos al hacer logout
+      const dialogKey = `auth-${userId}`;
+      this.activeDialogs.delete(dialogKey);
+      this.activeProcesses.delete(userId);
+      
+      console.log(`TeamsBot: Usuario ${userId} ha cerrado sesión y limpiado estados activos`);
       return true;
     }
     return false;
@@ -1231,6 +1282,41 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
     if (!context.turnState.get('UserState')) {
       context.turnState.set('UserState', this.userState);
     }
+  }
+
+  /**
+   * NUEVO: Limpia estados colgados para mantenimiento
+   * @returns {Object} - Información de limpieza
+   */
+  cleanupStuckStates() {
+    const beforeDialogs = this.activeDialogs.size;
+    const beforeProcesses = this.activeProcesses.size;
+    
+    // Limpiar todos los estados activos
+    this.activeDialogs.clear();
+    this.activeProcesses.clear();
+    
+    const cleaned = {
+      dialogs: beforeDialogs,
+      processes: beforeProcesses,
+      total: beforeDialogs + beforeProcesses
+    };
+    
+    console.log(`TeamsBot: Limpieza de mantenimiento - Removidos ${cleaned.total} estados colgados`);
+    return cleaned;
+  }
+
+  /**
+   * NUEVO: Obtiene información de estados activos para debugging
+   * @returns {Object} - Estado actual
+   */
+  getActiveStatesInfo() {
+    return {
+      activeDialogs: Array.from(this.activeDialogs),
+      activeProcesses: Array.from(this.activeProcesses.keys()),
+      authenticatedUsers: Array.from(this.authenticatedUsers.keys()),
+      timestamp: new Date().toISOString()
+    };
   }
 }
 
