@@ -305,8 +305,7 @@ class TeamsBot extends DialogBot {
       
       if (!context.activity.value && connectionName) {
         const loginCard = CardFactory.oauthCard(
-          connectionName,
-          'Iniciar Sesión'
+          connectionName
         );
         await context.sendActivity({ attachments: [loginCard] });
       } else if (!connectionName) {
