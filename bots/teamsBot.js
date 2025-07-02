@@ -40,6 +40,13 @@ class TeamsBot extends DialogBot {
     
     // NUEVO: Control de procesos activos para evitar duplicaciones
     this.activeProcesses = new Map();
+    
+    // NUEVO: Control de timeouts para procesos de autenticación abandonados
+    this.authTimeouts = new Map();
+    this.AUTH_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutos timeout para autenticación
+    
+    // NUEVO: Iniciar limpieza periódica de timeouts
+    this.startTimeoutCleanup();
   }
 
   /**
@@ -404,6 +411,9 @@ class TeamsBot extends DialogBot {
     // Marcar como activo ANTES de ejecutar
     this.activeDialogs.add(dialogKey);
 
+    // NUEVO: Establecer timeout para detectar proceso abandonado
+    this.setAuthTimeout(userId, context);
+
     try {
       const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
       
@@ -422,6 +432,10 @@ class TeamsBot extends DialogBot {
     } catch (error) {
       console.error('TeamsBot: Error en _handleLoginRequest:', error);
       await context.sendActivity('❌ Error al iniciar el proceso de autenticación. Por favor, intenta nuevamente.');
+      
+      // Limpiar en caso de error
+      this.activeDialogs.delete(dialogKey);
+      this.clearAuthTimeout(userId);
     } finally {
       // IMPORTANTE: Limpiar SOLO si el diálogo terminó completamente
       // No limpiar aquí ya que el diálogo puede estar en progreso
@@ -707,9 +721,6 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
     }
   }
 
-  // [Los métodos restantes se mantienen igual...]
-  // _processDateFields, _convertToISODate, _processUrlParameters, _executeHttpRequest, etc.
-
   /**
    * CORREGIDO: Maneja actividades invoke sin duplicaciones
    * @param {TurnContext} context - Contexto del turno
@@ -749,11 +760,27 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
           return { status: 200 };
         }
       } else if (activityName === 'signin/failure') {
+        // MEJORADO: Manejo específico cuando el usuario cierra el card de autenticación
+        console.log(`TeamsBot: Usuario ${userId} falló en autenticación - posiblemente cerró el card`);
+        
         // Limpiar estados en caso de fallo
         this.activeDialogs.delete(dialogKey);
         this.activeProcesses.delete(userId);
         
-        await context.sendActivity('❌ **Error en autenticación.** \n\nPor favor, intenta autenticarte nuevamente.');
+        // NUEVO: Mensaje específico para cuando se cierra el card
+        await context.sendActivity('❌ **Autenticación fallida**\n\n' +
+          '🚫 **El proceso de autenticación no se completó correctamente.**\n\n' +
+          '**Posibles causas:**\n' +
+          '• Cerraste la ventana de autenticación antes de completar el proceso\n' +
+          '• Cancelaste la autenticación en el proveedor OAuth\n' +
+          '• Hubo un error de conectividad durante el proceso\n' +
+          '• El servidor de autenticación no respondió\n\n' +
+          '**Para usar el bot:**\n' +
+          '• Escribe `login` para intentar autenticarte nuevamente\n' +
+          '• Asegúrate de completar todo el proceso sin cerrar ventanas\n' +
+          '• Verifica tu conexión a internet\n\n' +
+          '💡 **Recuerda**: Necesitas completar la autenticación para usar las funciones del bot.');
+        
         return { status: 200 };
       }
 
@@ -767,12 +794,23 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
       this.activeDialogs.delete(dialogKey);
       this.activeProcesses.delete(userId);
       
+      // NUEVO: Enviar mensaje de error específico para problemas de invoke
+      try {
+        await context.sendActivity('❌ **Error en el proceso de autenticación**\n\n' +
+          'Ocurrió un problema técnico durante la autenticación.\n\n' +
+          '**Soluciones:**\n' +
+          '• Espera un momento e intenta `login` nuevamente\n' +
+          '• Verifica que tu navegador permita ventanas emergentes\n' +
+          '• Si continúa fallando, contacta al administrador\n\n' +
+          `**Código de error**: INV-${Date.now()}`);
+      } catch (sendError) {
+        console.error('TeamsBot: Error adicional enviando mensaje de error invoke:', sendError.message);
+      }
+      
       return { status: 500 };
     }
   }
 
-  // [Resto de métodos permanecen iguales...]
-  
   /**
    * Procesa los campos de fecha para convertirlos al formato ISO 8601
    * @param {Object} fieldData - Datos de los campos
@@ -1217,11 +1255,12 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
       await this.authState.set(context, authData);
       await this.userState.saveChanges(context);
 
-      // NUEVO: Limpiar diálogos activos al completar autenticación exitosa
+      // NUEVO: Limpiar diálogos activos y timeouts al completar autenticación exitosa
       const dialogKey = `auth-${userId}`;
       this.activeDialogs.delete(dialogKey);
       this.activeProcesses.delete(userId);
-      console.log(`TeamsBot: Limpiados diálogos activos para usuario autenticado ${userId}`);
+      this.clearAuthTimeout(userId);
+      console.log(`TeamsBot: Limpiados diálogos activos y timeouts para usuario autenticado ${userId}`);
 
       // Crear registro de conversación
       try {
@@ -1256,15 +1295,112 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
     if (this.authenticatedUsers.has(userId)) {
       this.authenticatedUsers.delete(userId);
       
-      // NUEVO: Limpiar también los diálogos activos al hacer logout
+      // NUEVO: Limpiar también los diálogos activos y timeouts al hacer logout
       const dialogKey = `auth-${userId}`;
       this.activeDialogs.delete(dialogKey);
       this.activeProcesses.delete(userId);
+      this.clearAuthTimeout(userId);
       
       console.log(`TeamsBot: Usuario ${userId} ha cerrado sesión y limpiado estados activos`);
       return true;
     }
     return false;
+  }
+
+  // NUEVOS MÉTODOS PARA MANEJO DE TIMEOUTS
+
+  /**
+   * Establece un timeout para un proceso de autenticación
+   * @param {string} userId - ID del usuario
+   * @param {TurnContext} context - Contexto para enviar mensajes
+   * @private
+   */
+  setAuthTimeout(userId, context) {
+    // Limpiar timeout anterior si existe
+    this.clearAuthTimeout(userId);
+    
+    const timeoutId = setTimeout(async () => {
+      console.log(`TeamsBot: Timeout de autenticación para usuario ${userId}`);
+      
+      try {
+        // Verificar si el usuario no completó la autenticación
+        if (!this.isUserAuthenticated(userId) && (this.activeDialogs.has(`auth-${userId}`) || this.activeProcesses.has(userId))) {
+          
+          // Limpiar estados
+          this.activeDialogs.delete(`auth-${userId}`);
+          this.activeProcesses.delete(userId);
+          this.clearAuthTimeout(userId);
+          
+          // Enviar mensaje de timeout
+          await context.sendActivity('⏰ **Tiempo de autenticación agotado**\n\n' +
+            '🚫 **El proceso de autenticación ha tomado demasiado tiempo.**\n\n' +
+            '**Posibles causas:**\n' +
+            '• No completaste el proceso de autenticación\n' +
+            '• Dejaste abierta la ventana sin finalizar\n' +
+            '• Hubo problemas de conectividad\n\n' +
+            '**Para usar el bot:**\n' +
+            '• Escribe `login` para iniciar un nuevo proceso de autenticación\n' +
+            '• Asegúrate de completar el proceso rápidamente\n' +
+            '• Verifica tu conexión a internet\n\n' +
+            '💡 **Recuerda**: Tienes 5 minutos para completar la autenticación.');
+            
+        }
+      } catch (error) {
+        console.error('TeamsBot: Error enviando mensaje de timeout:', error.message);
+      }
+    }, this.AUTH_TIMEOUT_MS);
+    
+    this.authTimeouts.set(userId, {
+      timeoutId,
+      startTime: Date.now(),
+      context: context
+    });
+    
+    console.log(`TeamsBot: Timeout de autenticación establecido para usuario ${userId} (${this.AUTH_TIMEOUT_MS}ms)`);
+  }
+
+  /**
+   * Limpia el timeout de autenticación para un usuario
+   * @param {string} userId - ID del usuario
+   * @private
+   */
+  clearAuthTimeout(userId) {
+    const timeoutInfo = this.authTimeouts.get(userId);
+    if (timeoutInfo) {
+      clearTimeout(timeoutInfo.timeoutId);
+      this.authTimeouts.delete(userId);
+      console.log(`TeamsBot: Timeout de autenticación limpiado para usuario ${userId}`);
+    }
+  }
+
+  /**
+   * Inicia la limpieza periódica de timeouts
+   * @private
+   */
+  startTimeoutCleanup() {
+    // Limpiar timeouts cada 10 minutos
+    setInterval(() => {
+      const now = Date.now();
+      const expiredTimeouts = [];
+      
+      for (const [userId, timeoutInfo] of this.authTimeouts.entries()) {
+        const elapsed = now - timeoutInfo.startTime;
+        if (elapsed > this.AUTH_TIMEOUT_MS + 60000) { // 1 minuto extra de margen
+          expiredTimeouts.push(userId);
+        }
+      }
+      
+      expiredTimeouts.forEach(userId => {
+        console.log(`TeamsBot: Limpiando timeout expirado para usuario ${userId}`);
+        this.clearAuthTimeout(userId);
+        this.activeDialogs.delete(`auth-${userId}`);
+        this.activeProcesses.delete(userId);
+      });
+      
+      if (expiredTimeouts.length > 0) {
+        console.log(`TeamsBot: Limpieza periódica completada - ${expiredTimeouts.length} timeouts expirados removidos`);
+      }
+    }, 10 * 60 * 1000); // 10 minutos
   }
 
   /**
@@ -1291,15 +1427,23 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
   cleanupStuckStates() {
     const beforeDialogs = this.activeDialogs.size;
     const beforeProcesses = this.activeProcesses.size;
+    const beforeTimeouts = this.authTimeouts.size;
     
     // Limpiar todos los estados activos
     this.activeDialogs.clear();
     this.activeProcesses.clear();
     
+    // Limpiar todos los timeouts
+    for (const [userId, timeoutInfo] of this.authTimeouts.entries()) {
+      clearTimeout(timeoutInfo.timeoutId);
+    }
+    this.authTimeouts.clear();
+    
     const cleaned = {
       dialogs: beforeDialogs,
       processes: beforeProcesses,
-      total: beforeDialogs + beforeProcesses
+      timeouts: beforeTimeouts,
+      total: beforeDialogs + beforeProcesses + beforeTimeouts
     };
     
     console.log(`TeamsBot: Limpieza de mantenimiento - Removidos ${cleaned.total} estados colgados`);
@@ -1311,10 +1455,69 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
    * @returns {Object} - Estado actual
    */
   getActiveStatesInfo() {
+    const timeoutInfo = [];
+    const now = Date.now();
+    
+    for (const [userId, timeoutData] of this.authTimeouts.entries()) {
+      const elapsed = now - timeoutData.startTime;
+      const remaining = Math.max(0, this.AUTH_TIMEOUT_MS - elapsed);
+      
+      timeoutInfo.push({
+        userId,
+        elapsed: Math.round(elapsed / 1000), // segundos
+        remaining: Math.round(remaining / 1000), // segundos
+        startTime: new Date(timeoutData.startTime).toISOString()
+      });
+    }
+    
     return {
       activeDialogs: Array.from(this.activeDialogs),
       activeProcesses: Array.from(this.activeProcesses.keys()),
+      authTimeouts: timeoutInfo,
       authenticatedUsers: Array.from(this.authenticatedUsers.keys()),
+      timeoutDurationMs: this.AUTH_TIMEOUT_MS,
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  /**
+   * NUEVO: Obtiene estadísticas detalladas del sistema de autenticación
+   * @returns {Object} - Estadísticas completas
+   */
+  getAuthenticationStats() {
+    const now = Date.now();
+    const timeoutStats = {
+      active: this.authTimeouts.size,
+      details: []
+    };
+    
+    for (const [userId, timeoutData] of this.authTimeouts.entries()) {
+      const elapsed = now - timeoutData.startTime;
+      const remaining = Math.max(0, this.AUTH_TIMEOUT_MS - elapsed);
+      
+      timeoutStats.details.push({
+        userId,
+        elapsedMs: elapsed,
+        remainingMs: remaining,
+        percentage: Math.round((elapsed / this.AUTH_TIMEOUT_MS) * 100)
+      });
+    }
+    
+    return {
+      authenticated: {
+        total: this.authenticatedUsers.size,
+        users: Array.from(this.authenticatedUsers.keys())
+      },
+      activeProcesses: {
+        dialogs: this.activeDialogs.size,
+        processes: this.activeProcesses.size,
+        timeouts: this.authTimeouts.size
+      },
+      timeouts: timeoutStats,
+      configuration: {
+        timeoutMs: this.AUTH_TIMEOUT_MS,
+        timeoutMinutes: Math.round(this.AUTH_TIMEOUT_MS / 60000)
+      },
       timestamp: new Date().toISOString()
     };
   }
