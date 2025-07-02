@@ -260,7 +260,7 @@ class DialogBot extends TeamsActivityHandler {
         
         // Mensajes específicos según el tipo de error
         if (error.message.includes('authentication')) {
-            userMessage = '🔒 Error de autenticación. Por favor, escribe `login` para iniciar sesión nuevamente.';
+            userMessage = '🔒 **Error en autenticación.** \n\nPor favor, intenta autenticarte nuevamente.';
         } else if (error.message.includes('timeout')) {
             userMessage = '⏰ La operación tardó demasiado tiempo. Por favor, intenta nuevamente.';
         } else if (error.message.includes('vacation')) {

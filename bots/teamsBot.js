@@ -753,7 +753,7 @@ En lugar de mostrar un menú fijo, ahora solo pregúntame qué necesitas:
         this.activeDialogs.delete(dialogKey);
         this.activeProcesses.delete(userId);
         
-        await context.sendActivity('❌ **Error en autenticación**\n\nHubo un problema con el login. Escribe `login` para intentar de nuevo.');
+        await context.sendActivity('❌ **Error en autenticación.** \n\nPor favor, intenta autenticarte nuevamente.');
         return { status: 200 };
       }
 
