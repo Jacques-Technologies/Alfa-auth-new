@@ -299,6 +299,11 @@ class LogoutDialog extends ComponentDialog {
 • \`logout\` - Cerrar sesión completamente
 • \`estado\` - Ver estado de autenticación actual
 
+**⚠️ Problemas de Autenticación:**
+• Si cerraste la ventana de login por error, escribe \`login\` nuevamente
+• Si el proceso se quedó colgado, escribe \`logout\` y luego \`login\`
+• Si ves errores de timeout, verifica tu conexión e intenta de nuevo
+
 **💡 Sistema Inteligente de Vacaciones:**
 ${isAuthenticated ? 
     '• "quiero solicitar vacaciones" - Proceso guiado\n' +
@@ -325,9 +330,11 @@ ${isAuthenticated ?
 • \`ayuda\` - Mostrar este mensaje
 • \`info\` - Información del bot
 
-**🆘 Soporte:**
-• Si tienes problemas, escribe \`logout\` y luego \`login\`
-• Para soporte técnico, contacta al administrador
+**🆘 Solución de Problemas:**
+• **Error "Autenticación cancelada"**: Completaste el proceso sin cerrar ventanas
+• **Error "Tiempo agotado"**: Tienes 5 minutos para completar la autenticación
+• **Proceso colgado**: Escribe \`logout\` para limpiar y luego \`login\` para intentar de nuevo
+• **Ventana cerrada**: Escribe \`login\` nuevamente y completa todo el proceso
 
 **Estado Actual:** ${isAuthenticated ? '🟢 Autenticado' : '🔴 No autenticado'}
             `;
@@ -378,12 +385,40 @@ ${isAuthenticated ?
                 statusMessage += `\n🔒 **Para acceder a las funciones:**\n`;
                 statusMessage += `• Escribe \`login\` para autenticarte\n`;
                 statusMessage += `• Una vez autenticado, tendrás acceso completo\n`;
+                
+                // NUEVO: Verificar si hay procesos de autenticación activos
+                const bot = innerDc.context.turnState.get('bot');
+                if (bot && typeof bot.getActiveStatesInfo === 'function') {
+                    const activeStates = bot.getActiveStatesInfo();
+                    const hasActiveAuth = activeStates.activeDialogs.includes(`auth-${userId}`) || 
+                                         activeStates.activeProcesses.includes(userId);
+                    
+                    if (hasActiveAuth) {
+                        statusMessage += `\n⚠️ **Proceso de autenticación activo detectado**\n`;
+                        statusMessage += `• Tienes un proceso de login en curso\n`;
+                        statusMessage += `• Completa la autenticación en la ventana abierta\n`;
+                        statusMessage += `• Si no ves la ventana, escribe \`logout\` y luego \`login\`\n`;
+                        
+                        // Información de timeout si está disponible
+                        const timeoutInfo = activeStates.authTimeouts?.find(t => t.userId === userId);
+                        if (timeoutInfo) {
+                            const remainingMinutes = Math.ceil(timeoutInfo.remaining / 60);
+                            statusMessage += `• Tiempo restante: ${remainingMinutes} minuto${remainingMinutes !== 1 ? 's' : ''}\n`;
+                        }
+                    }
+                }
             }
             
             statusMessage += `\n📊 **Estadísticas de sesión:**\n`;
             statusMessage += `• Conexión OAuth: ${this.connectionName}\n`;
             statusMessage += `• Logouts totales: ${this.logoutStats.totalLogouts}\n`;
             statusMessage += `• Último logout: ${this.logoutStats.lastLogout || 'N/A'}\n`;
+            
+            // NUEVO: Añadir información de solución de problemas
+            statusMessage += `\n🔧 **Solución de Problemas:**\n`;
+            statusMessage += `• **Proceso colgado:** \`logout\` + \`login\`\n`;
+            statusMessage += `• **Ventana cerrada:** Vuelve a escribir \`login\`\n`;
+            statusMessage += `• **Timeout:** Completa la autenticación en 5 minutos\n`;
             
             await innerDc.context.sendActivity(statusMessage);
             return null;

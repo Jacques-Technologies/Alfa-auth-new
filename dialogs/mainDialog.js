@@ -187,6 +187,7 @@ class MainDialog extends LogoutDialog {
             const conversationId = stepContext.context.activity.conversation.id;
             
             console.log(`MainDialog: Procesando resultado de autenticación para usuario ${userId}`);
+            console.log(`MainDialog: Tipo de respuesta recibida:`, typeof tokenResponse, tokenResponse);
             
             if (tokenResponse && tokenResponse.token) {
                 console.log(`MainDialog: Token OAuth recibido exitosamente para usuario ${userId}`);
@@ -243,15 +244,32 @@ class MainDialog extends LogoutDialog {
                     return await stepContext.endDialog();
                 }
             } else {
-                console.warn(`MainDialog: No se recibió token OAuth para usuario ${userId}`);
-                await stepContext.context.sendActivity('❌ **Error de autenticación**\n\nNo se pudo completar el inicio de sesión. Posibles causas:\n\n• Cancelaste el proceso de autenticación\n• Hubo un problema con el servidor de autenticación\n• La sesión expiró\n\n💡 **Solución**: Por favor, intenta autenticarte nuevamente.');
+                // MEJORADO: Mensaje más específico cuando se cierra el card de autenticación
+                console.warn(`MainDialog: Usuario ${userId} cerró el card de autenticación o canceló el proceso`);
+                
+                await stepContext.context.sendActivity('❌ **Autenticación cancelada**\n\n' +
+                    '🚫 **Has cerrado la ventana de autenticación sin completar el proceso.**\n\n' +
+                    '**Para usar el bot necesitas autenticarte:**\n' +
+                    '• Escribe `login` para intentar nuevamente\n' +
+                    '• Asegúrate de completar todo el proceso de autenticación\n' +
+                    '• Si continúas teniendo problemas, contacta al administrador\n\n' +
+                    '💡 **Importante**: Sin autenticación no puedes acceder a las funciones del bot.');
+                
                 return await stepContext.endDialog();
             }
         } catch (error) {
             console.error('MainDialog: Error crítico en loginStep:', error.message);
             console.error('MainDialog: Stack trace:', error.stack);
             
-            await stepContext.context.sendActivity('❌ **Error inesperado**\n\nOcurrió un error durante el proceso de autenticación. Por favor, intenta nuevamente o contacta al administrador si el problema persiste.');
+            const userId = stepContext.context.activity.from.id;
+            await stepContext.context.sendActivity('❌ **Error inesperado en autenticación**\n\n' +
+                'Ocurrió un error durante el proceso de autenticación.\n\n' +
+                '**Qué puedes hacer:**\n' +
+                '• Espera un momento e intenta escribir `login` nuevamente\n' +
+                '• Verifica tu conexión a internet\n' +
+                '• Si el problema persiste, contacta al administrador\n\n' +
+                `**Código de error**: AUTH-${Date.now()}`);
+            
             return await stepContext.endDialog();
         }
     }
