@@ -83,7 +83,7 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Maneja todos los mensajes entrantes - VERSIÓN CORREGIDA
+   * Maneja todos los mensajes entrantes - VERSIÓN CORREGIDA CON PRIORIDAD PARA COMANDOS DE EMERGENCIA
    */
   async handleMessageWithAuth(context, next) {
     this._ensureBotInContext(context);
@@ -99,6 +99,31 @@ class TeamsBot extends DialogBot {
       // CORRECCIÓN: Solo procesar actividades de tipo 'message'
       if (activityType !== 'message') {
         console.log(`[${userId}] Ignorando actividad tipo ${activityType}`);
+        return await next();
+      }
+
+      // 🚨 CORRECCIÓN CRÍTICA: Comandos de emergencia tienen prioridad absoluta
+      const emergencyCommands = ['logout', 'cerrar sesion', 'cerrar sesión', 'salir', 'exit', 'reset'];
+      const isEmergencyCommand = emergencyCommands.includes(text);
+      
+      if (isEmergencyCommand) {
+        console.log(`[${userId}] Comando de emergencia detectado: "${text}"`);
+        
+        // Limpiar TODOS los estados inmediatamente
+        this.activeProcesses.delete(userId);
+        this.activeDialogs.delete(`auth-${userId}`);
+        this.authTimeoutManager.clearAuthTimeout(userId);
+        
+        // Limpiar en MainDialog también
+        const mainDialog = global.mainDialogInstance;
+        if (mainDialog) {
+          mainDialog.endUserDialog(userId);
+        }
+        
+        console.log(`[${userId}] Estados limpiados por comando de emergencia`);
+        
+        // Procesar el logout directamente
+        await this._handleLogoutRequest(context, userId);
         return await next();
       }
 
@@ -118,7 +143,7 @@ class TeamsBot extends DialogBot {
         }
       }
 
-      // CORRECCIÓN: Verificar diálogos activos de forma más específica
+      // CORRECCIÓN: Verificar diálogos activos con timeout
       const dialogKey = `auth-${userId}`;
       if (this.activeDialogs.has(dialogKey)) {
         console.log(`[${userId}] Diálogo de autenticación activo, ignorando mensaje`);
@@ -127,7 +152,6 @@ class TeamsBot extends DialogBot {
 
       // CORRECCIÓN: Marcar proceso como activo SOLO para comandos específicos
       const needsProcessing = this._isExplicitLoginCommand(text) || 
-                            this._isLogoutRequest(text) ||
                             (context.activity.value && Object.keys(context.activity.value).length > 0);
 
       if (needsProcessing) {
@@ -147,8 +171,6 @@ class TeamsBot extends DialogBot {
           await this._handleLoginRequest(context, userId);
         } else if (context.activity.value && Object.keys(context.activity.value).length > 0) {
           await this._handleCardSubmit(context, context.activity.value);
-        } else if (this._isLogoutRequest(text)) {
-          await this._handleLogoutRequest(context, userId);
         } else {
           // Mensajes generales - requieren autenticación
           if (isAuthenticated) {
@@ -609,13 +631,21 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Marca usuario como autenticado - VERSIÓN CORREGIDA
+   * Marca usuario como autenticado - VERSIÓN CORREGIDA Y MEJORADA
    */
   async setUserAuthenticated(userId, conversationId, userData) {
     try {
       const { email, name, token, context } = userData;
       
-      console.log(`Marcando usuario ${userId} como autenticado - Email: ${email}`);
+      console.log(`[${userId}] Marcando usuario como autenticado - Email: ${email}`);
+      
+      // CORRECCIÓN: Limpiar diálogos activos y timeouts ANTES de marcar como autenticado
+      const dialogKey = `auth-${userId}`;
+      this.activeDialogs.delete(dialogKey);
+      this.activeProcesses.delete(userId);
+      this.authTimeoutManager.clearAuthTimeout(userId);
+      
+      console.log(`[${userId}] Estados de autenticación limpiados`);
       
       // Almacenar en memoria
       this.authenticatedUsers.set(userId, { email, name, token, context });
@@ -632,24 +662,18 @@ class TeamsBot extends DialogBot {
       await this.authState.set(context, authData);
       await this.userState.saveChanges(context);
 
-      // CORRECCIÓN: Limpiar diálogos activos y timeouts después de autenticación exitosa
-      const dialogKey = `auth-${userId}`;
-      this.activeDialogs.delete(dialogKey);
-      this.activeProcesses.delete(userId);
-      this.authTimeoutManager.clearAuthTimeout(userId);
-
-      console.log(`Usuario ${userId} autenticado exitosamente`);
+      console.log(`[${userId}] Usuario marcado como autenticado exitosamente`);
 
       // Crear registro de conversación
       try {
         await this.conversationService.createConversation(conversationId, userId);
       } catch (error) {
-        console.warn('Error creando conversación:', error.message);
+        console.warn(`[${userId}] Error creando conversación:`, error.message);
       }
 
       return true;
     } catch (error) {
-      console.error('Error en setUserAuthenticated:', error);
+      console.error(`[${userId}] Error en setUserAuthenticated:`, error);
       return false;
     }
   }
