@@ -724,13 +724,10 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             case 'referencias':
                 return await this.ejecutarReferencias(parametros.consulta);
                 
-<<<<<<< HEAD
             case 'buscar_documentos':
                 return await this.ejecutarBuscarDocumentos(parametros.consulta);
                 
             // HERRAMIENTAS DE BUBBLE
-=======
->>>>>>> c9246c7bb1982b1e9d0aa9cee418fa3712261ede
             case 'comedor':
                 return await this.ejecutarComedor(parametros.filtro_dia);
                 
@@ -1245,11 +1242,8 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
         }
     }
 
-<<<<<<< HEAD
     // MÉTODOS DE BÚSQUEDA
 
-=======
->>>>>>> c9246c7bb1982b1e9d0aa9cee418fa3712261ede
     /**
      * Ejecuta búsqueda de referencias en documentos
      * @param {string} consulta - Texto de búsqueda
@@ -1514,93 +1508,6 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
             return { error: `Error al buscar en directorio: ${error.message}` };
         }
     }
-<<<<<<< HEAD
-=======
-
-    /**
-     * Ejecuta consulta de incidente
-     * @param {string} number - Número de incidente
-     * @returns {Object} - Datos del incidente
-     */
-    async ejecutarGetIncident(number) {
-        try {
-            if (!process.env.TOKEN_API) {
-                return { error: "El servicio de incidentes no está configurado" };
-            }
-            
-            const res = await axios.get(
-                'https://api.supporttsmx.com.mx/TSMX/SNOW/Incident/GetIncident',
-                {
-                    headers: { Authorization: `Bearer ${process.env.TOKEN_API}` },
-                    httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-                    params: { number },
-                    timeout: 15000
-                }
-            );
-            return res.data;
-        } catch (error) {
-            console.error(`Error en get_incident: ${error.message}`);
-            return { error: `Error al consultar incidente: ${error.message}` };
-        }
-    }
-
-    /**
-     * Ejecuta búsqueda de incidentes
-     * @param {string} query - Texto de búsqueda
-     * @returns {Object} - Lista de incidentes
-     */
-    async ejecutarGetIncidentKeyList(query) {
-        try {
-            if (!process.env.TOKEN_API) {
-                return { error: "El servicio de incidentes no está configurado" };
-            }
-            
-            const res = await axios.get(
-                'https://api.supporttsmx.com.mx/TSMX/SNOW/Incident/GetIncidentKeyList',
-                {
-                    headers: { Authorization: `Bearer ${process.env.TOKEN_API}` },
-                    httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-                    params: { query },
-                    timeout: 15000
-                }
-            );
-            return res.data;
-        } catch (error) {
-            console.error(`Error en get_incident_key_list: ${error.message}`);
-            return { error: `Error al buscar incidentes: ${error.message}` };
-        }
-    }
-
-    /**
-     * Ejecuta creación de incidente
-     * @param {Object} parametros - Parámetros para el incidente
-     * @returns {Object} - Resultado de la creación
-     */
-    async ejecutarCreateIncidentByCI(parametros) {
-        try {
-            if (!process.env.TOKEN_API) {
-                return { error: "El servicio de incidentes no está configurado" };
-            }
-            
-            const res = await axios.post(
-                'https://api.supporttsmx.com.mx/TSMX/SNOW/Incident/CreateIncidentbyCI',
-                parametros,
-                {
-                    headers: { 
-                        Authorization: `Bearer ${process.env.TOKEN_API}`,
-                        'Content-Type': 'application/json'
-                    },
-                    httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-                    timeout: 15000
-                }
-            );
-            return res.data;
-        } catch (error) {
-            console.error(`Error en create_incident_by_ci: ${error.message}`);
-            return { error: `Error al crear incidente: ${error.message}` };
-        }
-    }
->>>>>>> c9246c7bb1982b1e9d0aa9cee418fa3712261ede
 }
 
 module.exports = new OpenAIService();
