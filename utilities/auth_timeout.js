@@ -1,7 +1,7 @@
-// utilities/auth_timeout.js - Utilidades para manejo de timeouts de autenticación
+// utilities/auth_timeout.js - Utilidades para manejo de timeouts de autenticación - VERSIÓN CORREGIDA
 
 class AuthTimeoutManager {
-  constructor(timeoutMs = 5 * 60 * 1000) { // 5 minutos por defecto
+  constructor(timeoutMs = 2 * 60 * 1000) { // Reducido a 2 minutos para evitar contextos revocados
     this.timeouts = new Map();
     this.timeoutMs = timeoutMs;
     this.startCleanupInterval();
@@ -10,26 +10,46 @@ class AuthTimeoutManager {
   /**
    * Establece un timeout para un proceso de autenticación
    * @param {string} userId - ID del usuario
-   * @param {TurnContext} context - Contexto para enviar mensajes
+   * @param {TurnContext} context - Contexto para almacenar info (NO se almacena directamente)
    * @param {Function} onTimeout - Callback cuando se agota el tiempo
    */
   setAuthTimeout(userId, context, onTimeout) {
     // Limpiar timeout anterior si existe
     this.clearAuthTimeout(userId);
     
+    // CORRECCIÓN: Solo almacenar información mínima necesaria, NO el contexto completo
+    const conversationRef = {
+      conversationId: context.activity.conversation.id,
+      channelId: context.activity.channelId,
+      userId: userId,
+      botId: context.activity.recipient.id,
+      serviceUrl: context.activity.serviceUrl
+    };
+    
     const timeoutId = setTimeout(async () => {
       try {
-        await this.handleTimeout(userId, context, onTimeout);
+        await this.handleTimeout(userId, conversationRef, onTimeout);
       } catch (error) {
-        console.error('Error en timeout de autenticación:', error);
+        console.error(`[${userId}] Error en timeout de autenticación:`, error);
+        // CORRECCIÓN: Continuar con limpieza incluso si hay error
+        if (onTimeout && typeof onTimeout === 'function') {
+          try {
+            await onTimeout(userId);
+          } catch (cleanupError) {
+            console.error(`[${userId}] Error en limpieza de timeout:`, cleanupError);
+          }
+        }
       }
     }, this.timeoutMs);
     
     this.timeouts.set(userId, {
       timeoutId,
       startTime: Date.now(),
-      context
+      conversationRef, // Solo referencia mínima
+      onTimeout
     });
+    
+    console.log(`[${userId}] Timeout de autenticación establecido para ${this.timeoutMs/1000} segundos`);
   }
 
   /**
@@ -41,32 +61,81 @@ class AuthTimeoutManager {
     if (timeoutInfo) {
       clearTimeout(timeoutInfo.timeoutId);
       this.timeouts.delete(userId);
+      console.log(`[${userId}] Timeout de autenticación limpiado`);
     }
   }
 
   /**
    * Maneja cuando se agota el tiempo de autenticación
    * @param {string} userId - ID del usuario
-   * @param {TurnContext} context - Contexto del turno
+   * @param {Object} conversationRef - Referencia mínima de la conversación
    * @param {Function} onTimeout - Callback cuando se agota el tiempo
    * @private
    */
-  async handleTimeout(userId, context, onTimeout) {
-    // Limpiar el timeout
-    this.clearAuthTimeout(userId);
+  async handleTimeout(userId, conversationRef, onTimeout) {
+    console.log(`[${userId}] Timeout de autenticación alcanzado`);
     
-    // Ejecutar callback si existe
+    // CORRECCIÓN: Ejecutar limpieza ANTES de intentar enviar mensaje
     if (onTimeout && typeof onTimeout === 'function') {
-      await onTimeout(userId);
+      try {
+        await onTimeout(userId);
+      } catch (cleanupError) {
+        console.error(`[${userId}] Error en callback de timeout:`, cleanupError);
+      }
     }
     
-    // Enviar mensaje de timeout
-    const timeoutMessage = this.createTimeoutMessage();
-    await context.sendActivity(timeoutMessage);
+    // CORRECCIÓN: Limpiar el timeout inmediatamente
+    this.clearAuthTimeout(userId);
+    
+    // CORRECCIÓN: Intentar enviar mensaje solo si tenemos bot instance
+    try {
+      await this.sendTimeoutMessage(userId, conversationRef);
+    } catch (messageError) {
+      console.error(`[${userId}] Error enviando mensaje de timeout:`, messageError);
+      // No re-lanzar el error, solo loggear
+    }
   }
 
   /**
-   * Crea el mensaje de timeout
+   * NUEVO: Envía mensaje de timeout usando bot instance global
+   * @param {string} userId - ID del usuario
+   * @param {Object} conversationRef - Referencia de la conversación
+   * @private
+   */
+  async sendTimeoutMessage(userId, conversationRef) {
+    try {
+      // CORRECCIÓN: Usar bot instance global en lugar de contexto almacenado
+      const bot = global.botInstance;
+      if (!bot || !bot.adapter) {
+        console.warn(`[${userId}] No se puede enviar mensaje de timeout - bot no disponible`);
+        return;
+      }
+
+      // CORRECCIÓN: Crear referencia de conversación para proactive messaging
+      const conversationReference = {
+        conversation: { id: conversationRef.conversationId },
+        user: { id: userId },
+        bot: { id: conversationRef.botId },
+        channelId: conversationRef.channelId,
+        serviceUrl: conversationRef.serviceUrl,
+        activityId: null
+      };
+
+      // CORRECCIÓN: Usar continueConversation para envío proactivo
+      await bot.adapter.continueConversation(conversationReference, async (context) => {
+        const timeoutMessage = this.createTimeoutMessage();
+        await context.sendActivity(timeoutMessage);
+      });
+
+      console.log(`[${userId}] Mensaje de timeout enviado exitosamente`);
+      
+    } catch (error) {
+      console.error(`[${userId}] Error enviando mensaje proactivo de timeout:`, error);
+    }
+  }
+
+  /**
+   * Crea el mensaje de timeout - VERSIÓN MEJORADA
    * @returns {string} - Mensaje de timeout formateado
    * @private
    */
@@ -74,16 +143,16 @@ class AuthTimeoutManager {
     const minutes = Math.round(this.timeoutMs / 60000);
     
     return `⏰ **Tiempo de autenticación agotado**\n\n` +
-           `🚫 **El proceso de autenticación ha tomado demasiado tiempo.**\n\n` +
-           `**Posibles causas:**\n` +
-           `• No completaste el proceso de autenticación\n` +
-           `• Dejaste abierta la ventana sin finalizar\n` +
+           `🚫 **El proceso de autenticación ha tardado demasiado tiempo.**\n\n` +
+           `**¿Qué pasó?**\n` +
+           `• El proceso de login duró más de ${minutes} minutos\n` +
+           `• La ventana de autenticación se cerró sin completar\n` +
            `• Hubo problemas de conectividad\n\n` +
-           `**Para usar el bot:**\n` +
-           `• Escribe \`login\` para iniciar un nuevo proceso de autenticación\n` +
-           `• Asegúrate de completar el proceso rápidamente\n` +
-           `• Verifica tu conexión a internet\n\n` +
-           `💡 **Recuerda**: Tienes ${minutes} minutos para completar la autenticación.`;
+           `**Para continuar:**\n` +
+           `• Escribe \`login\` para iniciar un nuevo proceso\n` +
+           `• Completa la autenticación rápidamente\n` +
+           `• No cierres la ventana hasta ver el mensaje de éxito\n\n` +
+           `💡 **Tip**: El proceso debe completarse en menos de ${minutes} minutos.`;
   }
 
   /**
@@ -91,10 +160,10 @@ class AuthTimeoutManager {
    * @private
    */
   startCleanupInterval() {
-    // Limpiar timeouts cada 10 minutos
+    // Limpiar timeouts cada 5 minutos
     setInterval(() => {
       this.cleanupExpiredTimeouts();
-    }, 10 * 60 * 1000);
+    }, 5 * 60 * 1000);
   }
 
   /**
@@ -107,12 +176,13 @@ class AuthTimeoutManager {
     
     for (const [userId, timeoutInfo] of this.timeouts.entries()) {
       const elapsed = now - timeoutInfo.startTime;
-      if (elapsed > this.timeoutMs + 60000) { // 1 minuto extra de margen
+      if (elapsed > this.timeoutMs + 30000) { // 30 segundos extra de margen
         expiredTimeouts.push(userId);
       }
     }
     
     expiredTimeouts.forEach(userId => {
+      console.warn(`[${userId}] Limpiando timeout expirado automáticamente`);
       this.clearAuthTimeout(userId);
     });
     
@@ -184,10 +254,40 @@ class AuthTimeoutManager {
     
     this.timeouts.clear();
     
+    console.log(`AuthTimeout: Todos los timeouts limpiados (${beforeCount} eliminados)`);
+    
     return {
       cleared: beforeCount,
       remaining: this.timeouts.size
     };
+  }
+
+  /**
+   * NUEVO: Fuerza limpieza de timeout específico con callback
+   * @param {string} userId - ID del usuario
+   * @returns {boolean} - Si se limpió algún timeout
+   */
+  forceCleanupUser(userId) {
+    const timeoutInfo = this.timeouts.get(userId);
+    if (!timeoutInfo) {
+      return false;
+    }
+    
+    console.log(`[${userId}] Limpieza forzada de timeout`);
+    
+    // Ejecutar callback de limpieza si existe
+    if (timeoutInfo.onTimeout && typeof timeoutInfo.onTimeout === 'function') {
+      try {
+        timeoutInfo.onTimeout(userId);
+      } catch (error) {
+        console.error(`[${userId}] Error en callback de limpieza forzada:`, error);
+      }
+    }
+    
+    // Limpiar el timeout
+    this.clearAuthTimeout(userId);
+    
+    return true;
   }
 }
 

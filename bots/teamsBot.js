@@ -1,4 +1,4 @@
-// teamsBot.js - Corrección del flujo de autenticación
+// teamsBot.js - Código completo corregido con manejo de timeouts mejorado
 
 const { DialogBot } = require('./dialogBot');
 const axios = require('axios');
@@ -13,14 +13,17 @@ const { isTokenValid } = require('../utilities/http_utils');
 const { AuthTimeoutManager } = require('../utilities/auth_timeout');
 
 /**
- * TeamsBot class - Versión corregida para el flujo de autenticación
+ * TeamsBot class - Versión completa corregida para el manejo de timeouts
  */
 class TeamsBot extends DialogBot {
   constructor(conversationState, userState, dialog) {
     super(conversationState, userState, dialog);
 
-    // Registrar instancia globalmente
+    // CORRECCIÓN: Registrar instancia globalmente ANTES de inicializar otros componentes
     global.botInstance = this;
+
+    // CORRECCIÓN: Asegurar que el adapter esté disponible
+    this.adapter = null; // Se establecerá cuando se use el bot
 
     // Configurar manejadores de actividades
     this.onMembersAdded(this.handleMembersAdded.bind(this));
@@ -35,8 +38,47 @@ class TeamsBot extends DialogBot {
     this.activeDialogs = new Set();
     this.activeProcesses = new Map();
     
-    // Inicializar gestor de timeouts
-    this.authTimeoutManager = new AuthTimeoutManager();
+    // CORRECCIÓN: Inicializar gestor de timeouts con tiempo reducido
+    this.authTimeoutManager = new AuthTimeoutManager(2 * 60 * 1000); // 2 minutos
+    
+    // CORRECCIÓN: Configurar cleanup automático cada 5 minutos
+    this.setupPeriodicCleanup();
+  }
+
+  /**
+   * NUEVO: Configura limpieza periódica de estados obsoletos
+   * @private
+   */
+  setupPeriodicCleanup() {
+    setInterval(() => {
+      try {
+        // Limpiar procesos obsoletos
+        const staleProcesses = this.cleanupStaleProcesses();
+        
+        // Limpiar timeouts expirados
+        this.authTimeoutManager.cleanupExpiredTimeouts();
+        
+        if (staleProcesses > 0) {
+          console.log(`Limpieza periódica: ${staleProcesses} procesos obsoletos removidos`);
+        }
+      } catch (error) {
+        console.error('Error en limpieza periódica:', error);
+      }
+    }, 5 * 60 * 1000); // Cada 5 minutos
+  }
+
+  /**
+   * Override run method para asegurar que el adapter esté disponible
+   * @param {TurnContext} context - The context object for the turn.
+   */
+  async run(context) {
+    // CORRECCIÓN: Asegurar que el adapter esté disponible para messaging proactivo
+    if (!this.adapter && context.adapter) {
+      this.adapter = context.adapter;
+    }
+
+    // Llamar al método padre
+    await super.run(context);
   }
 
   /**
@@ -110,9 +152,7 @@ class TeamsBot extends DialogBot {
         console.log(`[${userId}] Comando de emergencia detectado: "${text}"`);
         
         // Limpiar TODOS los estados inmediatamente
-        this.activeProcesses.delete(userId);
-        this.activeDialogs.delete(`auth-${userId}`);
-        this.authTimeoutManager.clearAuthTimeout(userId);
+        this.cleanupUserStates(userId);
         
         // Limpiar en MainDialog también
         const mainDialog = global.mainDialogInstance;
@@ -135,8 +175,7 @@ class TeamsBot extends DialogBot {
         // Reducir timeout a 15 segundos para evitar bloqueos largos
         if (timeElapsed > 15000) {
           console.warn(`[${userId}] Limpiando proceso activo obsoleto (${timeElapsed}ms)`);
-          this.activeProcesses.delete(userId);
-          this.activeDialogs.delete(`auth-${userId}`);
+          this.cleanupUserStates(userId);
         } else {
           console.log(`[${userId}] Proceso activo reciente (${timeElapsed}ms), ignorando mensaje`);
           return await next();
@@ -197,8 +236,7 @@ class TeamsBot extends DialogBot {
       
       const userId = context.activity.from.id;
       // CORRECCIÓN: Limpiar todos los estados en caso de error
-      this.activeProcesses.delete(userId);
-      this.activeDialogs.delete(`auth-${userId}`);
+      this.cleanupUserStates(userId);
     }
 
     await next();
@@ -209,10 +247,6 @@ class TeamsBot extends DialogBot {
    */
   _isExplicitLoginCommand(text) {
     return text === 'login' || text === 'iniciar sesion' || text === 'iniciar sesión';
-  }
-
-  _isLogoutRequest(text) {
-    return ['logout', 'cerrar sesion', 'cerrar sesión', 'salir'].includes(text);
   }
 
   /**
@@ -266,7 +300,7 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Maneja solicitudes de login - VERSIÓN CORREGIDA
+   * Maneja solicitudes de login - VERSIÓN CORREGIDA PARA TIMEOUTS
    */
   async _handleLoginRequest(context, userId) {
     const dialogKey = `auth-${userId}`;
@@ -292,18 +326,22 @@ class TeamsBot extends DialogBot {
     this.activeDialogs.add(dialogKey);
     console.log(`[${userId}] Marcando diálogo como activo`);
 
-    // Establecer timeout para autenticación con callback mejorado
+    // CORRECCIÓN: Establecer timeout con callback mejorado que NO usa contexto revocado
     this.authTimeoutManager.setAuthTimeout(userId, context, async (timeoutUserId) => {
-      console.log(`[${timeoutUserId}] Timeout de autenticación alcanzado`);
+      console.log(`[${timeoutUserId}] Ejecutando limpieza por timeout`);
+      
+      // Limpiar estados locales
       this.activeDialogs.delete(`auth-${timeoutUserId}`);
       this.activeProcesses.delete(timeoutUserId);
       
-      try {
-        await context.sendActivity('⏰ **Tiempo de autenticación agotado**\n\n' +
-          'El proceso de autenticación ha tardado demasiado. Escribe `login` para intentar nuevamente.');
-      } catch (error) {
-        console.error(`[${timeoutUserId}] Error enviando mensaje de timeout:`, error);
+      // Limpiar en MainDialog también
+      const mainDialog = global.mainDialogInstance;
+      if (mainDialog) {
+        mainDialog.endUserDialog(timeoutUserId);
       }
+      
+      // CORRECCIÓN: No intentar enviar mensaje aquí - se maneja en AuthTimeoutManager
+      console.log(`[${timeoutUserId}] Estados limpiados por timeout`);
     });
 
     try {
@@ -318,7 +356,7 @@ class TeamsBot extends DialogBot {
       console.log(`[${userId}] Iniciando diálogo OAuth con connectionName: ${connectionName}`);
       
       // CORRECCIÓN: Enviar mensaje de inicio una sola vez
-      await context.sendActivity('🔄 **Iniciando autenticación...**\n\nTe redirigiremos al sistema de login corporativo.');
+      await context.sendActivity('🔄 **Iniciando autenticación...**\n\nTe redirigiremos al sistema de login corporativo.\n\n⏱️ **Importante**: Completa el proceso en menos de 2 minutos para evitar que expire.');
       
       // Iniciar el diálogo OAuth
       await this.dialog.run(context, this.dialogState);
@@ -336,10 +374,15 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Maneja solicitudes de logout
+   * Maneja solicitudes de logout - VERSIÓN MEJORADA
    */
   async _handleLogoutRequest(context, userId) {
     try {
+      console.log(`[${userId}] Iniciando proceso de logout`);
+      
+      // CORRECCIÓN: Limpiar timeout inmediatamente
+      this.authTimeoutManager.clearAuthTimeout(userId);
+      
       // Limpiar estado de autenticación
       const authData = await this.authState.get(context, {});
       if (authData[userId]) {
@@ -350,15 +393,22 @@ class TeamsBot extends DialogBot {
 
       // Limpiar memoria y estados
       this.authenticatedUsers.delete(userId);
-      this.authTimeoutManager.clearAuthTimeout(userId);
-      // CORRECCIÓN: Limpiar también los estados de proceso activo
       this.activeProcesses.delete(userId);
       this.activeDialogs.delete(`auth-${userId}`);
 
-      await context.sendActivity('✅ **Sesión cerrada exitosamente**');
+      // Limpiar en MainDialog también
+      const mainDialog = global.mainDialogInstance;
+      if (mainDialog) {
+        mainDialog.endUserDialog(userId);
+      }
+
+      await context.sendActivity('✅ **Sesión cerrada exitosamente**\n\n🔒 Para volver a usar el bot, escribe `login` para autenticarte nuevamente.');
+      
+      console.log(`[${userId}] Logout completado exitosamente`);
+      
     } catch (error) {
-      console.error('Error en logout:', error);
-      await context.sendActivity('❌ Error al cerrar sesión.');
+      console.error(`[${userId}] Error en logout:`, error);
+      await context.sendActivity('❌ Error al cerrar sesión. Intenta nuevamente.');
     }
   }
 
@@ -421,9 +471,14 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Maneja expiración de token
+   * Maneja expiración de token - VERSIÓN MEJORADA
    */
   async _handleTokenExpiration(context, userId) {
+    console.log(`[${userId}] Manejando expiración de token`);
+    
+    // CORRECCIÓN: Limpiar timeout si existe
+    this.authTimeoutManager.clearAuthTimeout(userId);
+    
     // Limpiar estado de autenticación
     const authData = await this.authState.get(context, {});
     if (authData[userId]) {
@@ -433,7 +488,6 @@ class TeamsBot extends DialogBot {
     }
     
     this.authenticatedUsers.delete(userId);
-    // CORRECCIÓN: Limpiar también los estados de proceso activo
     this.activeProcesses.delete(userId);
     this.activeDialogs.delete(`auth-${userId}`);
     
@@ -495,9 +549,7 @@ class TeamsBot extends DialogBot {
         console.log(`[${userId}] Procesando signin/failure`);
         
         // CORRECCIÓN: Limpiar todos los estados en caso de falla
-        this.activeDialogs.delete(dialogKey);
-        this.activeProcesses.delete(userId);
-        this.authTimeoutManager.clearAuthTimeout(userId);
+        this.cleanupUserStates(userId);
         
         await context.sendActivity('❌ **Autenticación fallida**\n\n' +
           'El proceso de autenticación no se completó correctamente.\n\n' +
@@ -536,9 +588,7 @@ class TeamsBot extends DialogBot {
       
       const userId = context.activity.from.id;
       // CORRECCIÓN: Limpiar estados en caso de error crítico
-      this.activeDialogs.delete(`auth-${userId}`);
-      this.activeProcesses.delete(userId);
-      this.authTimeoutManager.clearAuthTimeout(userId);
+      this.cleanupUserStates(userId);
       
       try {
         await context.sendActivity('❌ **Error en el proceso de autenticación**\n\n' +
@@ -639,11 +689,13 @@ class TeamsBot extends DialogBot {
       
       console.log(`[${userId}] Marcando usuario como autenticado - Email: ${email}`);
       
+      // CORRECCIÓN: Limpiar timeout ANTES de marcar como autenticado
+      this.authTimeoutManager.clearAuthTimeout(userId);
+      
       // CORRECCIÓN: Limpiar diálogos activos y timeouts ANTES de marcar como autenticado
       const dialogKey = `auth-${userId}`;
       this.activeDialogs.delete(dialogKey);
       this.activeProcesses.delete(userId);
-      this.authTimeoutManager.clearAuthTimeout(userId);
       
       console.log(`[${userId}] Estados de autenticación limpiados`);
       
@@ -691,16 +743,44 @@ class TeamsBot extends DialogBot {
   logoutUser(userId) {
     if (this.authenticatedUsers.has(userId)) {
       this.authenticatedUsers.delete(userId);
-      
-      const dialogKey = `auth-${userId}`;
-      this.activeDialogs.delete(dialogKey);
-      this.activeProcesses.delete(userId);
-      this.authTimeoutManager.clearAuthTimeout(userId);
-      
+      this.cleanupUserStates(userId);
       console.log(`Usuario ${userId} ha cerrado sesión`);
       return true;
     }
     return false;
+  }
+
+  /**
+   * NUEVO: Limpia procesos obsoletos específicos del usuario
+   * @param {string} userId - ID del usuario
+   * @returns {boolean} - Si se limpió algo
+   */
+  cleanupUserStates(userId) {
+    let cleaned = false;
+    
+    // Limpiar procesos activos
+    if (this.activeProcesses.has(userId)) {
+      this.activeProcesses.delete(userId);
+      cleaned = true;
+    }
+    
+    // Limpiar diálogos activos
+    if (this.activeDialogs.has(`auth-${userId}`)) {
+      this.activeDialogs.delete(`auth-${userId}`);
+      cleaned = true;
+    }
+    
+    // Limpiar timeout
+    if (this.authTimeoutManager.hasActiveTimeout(userId)) {
+      this.authTimeoutManager.clearAuthTimeout(userId);
+      cleaned = true;
+    }
+    
+    if (cleaned) {
+      console.log(`[${userId}] Estados limpiados automáticamente`);
+    }
+    
+    return cleaned;
   }
 
   /**
@@ -719,20 +799,24 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Obtiene estadísticas del bot
+   * Obtiene estadísticas del bot - VERSIÓN MEJORADA
    */
   getStats() {
+    const timeoutStats = this.authTimeoutManager.getActiveTimeouts();
+    
     return {
       authenticatedUsers: this.authenticatedUsers.size,
       activeDialogs: this.activeDialogs.size,
       activeProcesses: this.activeProcesses.size,
-      authTimeouts: this.authTimeoutManager.getActiveTimeouts(),
+      authTimeouts: timeoutStats.active,
+      authTimeoutDetails: timeoutStats.timeouts,
+      adapterAvailable: !!this.adapter,
       timestamp: new Date().toISOString()
     };
   }
 
   /**
-   * NUEVA FUNCIÓN: Método de limpieza para mantenimiento
+   * NUEVA FUNCIÓN: Método de limpieza para mantenimiento - VERSIÓN MEJORADA
    */
   cleanupStaleProcesses() {
     const now = Date.now();
@@ -740,7 +824,7 @@ class TeamsBot extends DialogBot {
     
     for (const [userId, startTime] of this.activeProcesses.entries()) {
       const timeElapsed = now - startTime;
-      if (timeElapsed > 60000) { // 1 minuto
+      if (timeElapsed > 3 * 60 * 1000) { // 3 minutos
         staleProcesses.push(userId);
       }
     }
@@ -748,6 +832,7 @@ class TeamsBot extends DialogBot {
     staleProcesses.forEach(userId => {
       this.activeProcesses.delete(userId);
       this.activeDialogs.delete(`auth-${userId}`);
+      this.authTimeoutManager.clearAuthTimeout(userId);
     });
     
     if (staleProcesses.length > 0) {
