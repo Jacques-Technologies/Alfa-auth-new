@@ -49,7 +49,7 @@ class MainDialog extends LogoutDialog {
     }
 
     /**
-     * The run method handles the incoming activity - VERSIÓN CORREGIDA CON PRIORIDAD PARA LOGOUT
+     * The run method handles the incoming activity - VERSIÓN CORREGIDA
      * @param {TurnContext} context - The context object for the turn.
      * @param {StatePropertyAccessor} accessor - The state property accessor for the dialog state.
      */
@@ -57,9 +57,8 @@ class MainDialog extends LogoutDialog {
         const userId = context.activity.from.id;
         const dialogKey = `auth-dialog-${userId}`;
         const activityType = context.activity.type;
-        const text = (context.activity.text || '').trim().toLowerCase();
         
-        console.log(`[${userId}] MainDialog.run - Tipo actividad: ${activityType}, Texto: "${text}"`);
+        console.log(`[${userId}] MainDialog.run - Tipo actividad: ${activityType}`);
         
         // CORRECCIÓN: Solo procesar para actividades de mensaje y invoke
         if (activityType !== 'message' && activityType !== 'invoke') {
@@ -83,54 +82,7 @@ class MainDialog extends LogoutDialog {
             }
         }
         
-        // 🚨 CORRECCIÓN CRÍTICA: Comandos de emergencia tienen prioridad absoluta
-        const emergencyCommands = ['logout', 'cerrar sesion', 'cerrar sesión', 'salir', 'exit', 'reset'];
-        const isEmergencyCommand = emergencyCommands.includes(text);
-        
-        if (isEmergencyCommand) {
-            console.log(`[${userId}] MainDialog: Comando de emergencia detectado: "${text}"`);
-            
-            // Limpiar TODOS los estados activos para este usuario
-            this.activeAuthDialogs.delete(dialogKey);
-            this.processingUsers.delete(userId);
-            
-            console.log(`[${userId}] MainDialog: Estados limpiados por comando de emergencia`);
-            
-            // No procesar el diálogo OAuth para comandos de emergencia
-            return;
-        }
-        
-        // CORRECCIÓN: Verificar timeout de diálogos activos
-        if (this.activeAuthDialogs.has(dialogKey)) {
-            // Verificar si el diálogo lleva mucho tiempo activo
-            const dialogStartTime = this.dialogStartTimes?.get(dialogKey);
-            if (dialogStartTime) {
-                const timeElapsed = Date.now() - dialogStartTime;
-                if (timeElapsed > 5 * 60 * 1000) { // 5 minutos
-                    console.warn(`[${userId}] MainDialog: Diálogo activo por ${timeElapsed}ms, limpiando automáticamente`);
-                    this.activeAuthDialogs.delete(dialogKey);
-                    this.processingUsers.delete(userId);
-                    this.dialogStartTimes?.delete(dialogKey);
-                    
-                    // Notificar al usuario
-                    try {
-                        await context.sendActivity('⏰ **Sesión de autenticación expirada**\n\n' +
-                            'El proceso de autenticación ha sido reiniciado automáticamente. ' +
-                            'Escribe `login` para intentar nuevamente.');
-                    } catch (error) {
-                        console.error(`[${userId}] Error enviando mensaje de expiración:`, error);
-                    }
-                } else {
-                    console.log(`[${userId}] MainDialog: Diálogo activo hace ${timeElapsed}ms, continuando`);
-                    return;
-                }
-            } else {
-                console.log(`[${userId}] MainDialog: Diálogo activo sin timestamp, continuando`);
-                return;
-            }
-        }
-        
-        // CORRECCIÓN: Verificar si ya se está procesando este usuario
+        // CORRECCIÓN: Verificar si ya se está procesando este usuario con timeout más corto
         if (this.processingUsers.has(userId)) {
             console.log(`[${userId}] MainDialog: Usuario ya está siendo procesado`);
             return;
@@ -160,6 +112,12 @@ class MainDialog extends LogoutDialog {
                 console.warn(`[${userId}] MainDialog: Error verificando estado persistente:`, error);
             }
         }
+        
+        // CORRECCIÓN: Verificar si ya hay un diálogo activo
+        if (this.activeAuthDialogs.has(dialogKey)) {
+            console.log(`[${userId}] MainDialog: Diálogo ya activo`);
+            return;
+        }
 
         // CORRECCIÓN: Marcar como procesando
         this.processingUsers.add(userId);
@@ -180,19 +138,12 @@ class MainDialog extends LogoutDialog {
                 // CORRECCIÓN: Marcar diálogo como activo antes de iniciar
                 this.activeAuthDialogs.add(dialogKey);
                 
-                // Inicializar timestamp para tracking
-                if (!this.dialogStartTimes) {
-                    this.dialogStartTimes = new Map();
-                }
-                this.dialogStartTimes.set(dialogKey, Date.now());
-                
                 try {
                     await dialogContext.beginDialog(this.id);
                     console.log(`[${userId}] MainDialog: Diálogo iniciado exitosamente`);
                 } catch (beginError) {
                     console.error(`[${userId}] MainDialog: Error iniciando diálogo:`, beginError);
                     this.activeAuthDialogs.delete(dialogKey);
-                    this.dialogStartTimes?.delete(dialogKey);
                     throw beginError;
                 }
             } else {
@@ -200,7 +151,6 @@ class MainDialog extends LogoutDialog {
                 if (results.status === DialogTurnStatus.complete || results.status === DialogTurnStatus.cancelled) {
                     console.log(`[${userId}] MainDialog: Diálogo terminado (${results.status})`);
                     this.activeAuthDialogs.delete(dialogKey);
-                    this.dialogStartTimes?.delete(dialogKey);
                 }
             }
         } catch (error) {
@@ -209,7 +159,6 @@ class MainDialog extends LogoutDialog {
             // CORRECCIÓN: Limpiar estado de error
             this.activeAuthDialogs.delete(dialogKey);
             this.processingUsers.delete(userId);
-            this.dialogStartTimes?.delete(dialogKey);
             
             throw error;
         } finally {
