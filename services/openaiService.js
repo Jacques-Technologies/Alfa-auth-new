@@ -20,7 +20,6 @@ class OpenAIService {
             } else {
                 this.openai = new OpenAI({ apiKey });
                 this.openaiAvailable = true;
-                console.log('OpenAIService: Cliente de OpenAI inicializado correctamente');
             }
         } catch (error) {
             console.error(`Error al inicializar OpenAI: ${error.message}`);
@@ -43,7 +42,6 @@ class OpenAIService {
                     new AzureKeyCredential(apiKey)
                 );
                 this.searchAvailable = true;
-                console.log('OpenAIService: Cliente de Azure Search inicializado correctamente');
             }
         } catch (error) {
             console.error(`Error al inicializar Azure Search: ${error.message}`);
@@ -217,42 +215,23 @@ class OpenAIService {
         
         // Añadir herramientas de búsqueda
         if (this.searchAvailable) {
-            tools.push(
-                {
-                    type: "function",
-                    function: {
-                        name: "referencias",
-                        description: "USAR SOLO cuando el usuario pida explícitamente buscar en documentos, políticas específicas, procedimientos detallados o manuales.",
-                        parameters: {
-                            type: "object",
-                            properties: {
-                                consulta: { 
-                                    type: "string", 
-                                    description: "Texto específico a buscar en documentos" 
-                                }
-                            },
-                            required: ["consulta"]
-                        }
-                    }
-                },
-                {
-                    type: "function",
-                    function: {
-                        name: "buscar_documentos",
-                        description: "Busca información específica en documentos usando búsqueda vectorial avanzada. Usar cuando el usuario necesite información detallada de documentos corporativos.",
-                        parameters: {
-                            type: "object",
-                            properties: {
-                                consulta: { 
-                                    type: "string", 
-                                    description: "Consulta específica para buscar en documentos" 
-                                }
-                            },
-                            required: ["consulta"]
-                        }
+            tools.push({
+                type: "function",
+                function: {
+                    name: "referencias",
+                    description: "USAR SOLO cuando el usuario pida explícitamente buscar en documentos, políticas específicas, procedimientos detallados o manuales.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            consulta: { 
+                                type: "string", 
+                                description: "Texto específico a buscar en documentos" 
+                            }
+                        },
+                        required: ["consulta"]
                     }
                 }
-            );
+            });
         }
         
         // Añadir herramientas de Bubble
@@ -775,8 +754,6 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                     parsedArgs = {};
                 }
                 
-                console.log(`OpenAI: Ejecutando herramienta ${name} con argumentos:`, parsedArgs);
-                
                 // Ejecutar la herramienta correspondiente
                 const resultado = await this.ejecutarHerramienta(name, parsedArgs);
                 
@@ -854,9 +831,6 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             // HERRAMIENTAS EXISTENTES
             case 'referencias':
                 return await this.ejecutarReferencias(parametros.consulta);
-                
-            case 'buscar_documentos':
-                return await this.ejecutarBuscarDocumentos(parametros.consulta);
                 
             case 'comedor':
                 return await this.ejecutarComedor(parametros.filtro_dia);
@@ -1407,8 +1381,6 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
         }
     }
 
-    // MÉTODOS EXISTENTES (referencias, búsqueda, etc.)
-
     /**
      * Ejecuta búsqueda de referencias en documentos
      * @param {string} consulta - Texto de búsqueda
@@ -1419,8 +1391,6 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
             if (!this.searchAvailable || !this.searchClient) {
                 return "El servicio de búsqueda en documentos no está disponible en este momento.";
             }
-            
-            console.log(`Buscando referencias para: "${consulta}"`);
             
             const emb = await this.openai.embeddings.create({
                 model: 'text-embedding-3-large',
@@ -1509,90 +1479,6 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
     }
 
     /**
-     * Ejecuta búsqueda vectorial avanzada en documentos específicos
-     * @param {string} consulta - Texto de búsqueda
-     * @returns {string} - Resultados formateados
-     */
-    async ejecutarBuscarDocumentos(consulta) {
-        try {
-            if (!this.searchAvailable || !this.searchClient) {
-                return "El servicio de búsqueda en documentos no está disponible en este momento.";
-            }
-            
-            console.log(`Ejecutando búsqueda vectorial avanzada para: "${consulta}"`);
-            
-            const emb = await this.openai.embeddings.create({
-                model: 'text-embedding-3-large',
-                input: consulta,
-                dimensions: 1024
-            });
-            
-            const vectorQuery = {
-                vector: emb.data[0].embedding,
-                kNearestNeighbors: 7,
-                fields: 'Embedding'
-            };
-            
-            const filterFolder = "Folder eq '1739218698126x647518027570958500'";
-
-            const searchResults = await this.searchClient.search(undefined, {
-                vectorQueries: [vectorQuery],
-                select: ['Chunk', 'Adicional', 'FileName'],
-                filter: filterFolder,
-                top: 7
-            });
-
-            const chunks = [];
-            
-            try {
-                for await (const result of searchResults.results) {
-                    const document = result.document;
-                    chunks.push(
-                        `📄 **${document.FileName || 'Documento sin nombre'}**\n` +
-                        `📝 ${document.Chunk || 'Sin contenido'}\n` +
-                        `💡 ${document.Adicional || 'Sin notas adicionales'}\n` +
-                        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-                    );
-                    if (chunks.length >= 7) break;
-                }
-            } catch (iterError) {
-                console.error('Error iterando resultados de Azure Search:', iterError.message);
-                
-                try {
-                    const resultsArray = [];
-                    for await (const result of searchResults.results) {
-                        resultsArray.push(result);
-                    }
-                    
-                    for (const result of resultsArray.slice(0, 7)) {
-                        const document = result.document;
-                        chunks.push(
-                            `📄 **${document.FileName || 'Documento sin nombre'}**\n` +
-                            `📝 ${document.Chunk || 'Sin contenido'}\n` +
-                            `💡 ${document.Adicional || 'Sin notas adicionales'}\n` +
-                            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-                        );
-                    }
-                } catch (arrayError) {
-                    console.error('Error con método array:', arrayError.message);
-                    return `Error al procesar resultados de búsqueda avanzada: ${arrayError.message}`;
-                }
-            }
-            
-            if (chunks.length === 0) {
-                return "No se encontraron documentos relevantes para esta consulta en la colección específica.";
-            }
-            
-            return `🔍 **Búsqueda Vectorial Avanzada** - Encontré ${chunks.length} resultado${chunks.length > 1 ? 's' : ''} relevante${chunks.length > 1 ? 's' : ''}:\n\n` + chunks.join('\n\n');
-            
-        } catch (error) {
-            console.error(`Error en búsqueda vectorial avanzada: ${error.message}`);
-            console.error('Stack trace:', error.stack);
-            return `No se pudo realizar la búsqueda vectorial avanzada. Error: ${error.message}`;
-        }
-    }
-
-    /**
      * Ejecuta consulta de menú de comedor
      * @param {string} filtro_dia - Día a consultar
      * @returns {Object} - Menú del día
@@ -1602,8 +1488,6 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
             if (!process.env.TOKEN_BUBBLE) {
                 return { error: "El servicio de comedor no está configurado" };
             }
-            
-            console.log(`Consultando menú del comedor para: ${filtro_dia}`);
             
             const res = await axios.post(
                 'https://alfa-48373.bubbleapps.io/api/1.1/wf/comedor',
@@ -1630,8 +1514,6 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
             if (!process.env.TOKEN_BUBBLE) {
                 return { error: "El servicio de información personal no está configurado" };
             }
-            
-            console.log(`Consultando información personal para: ${email}`);
             
             const res = await axios.post(
                 'https://alfa-48373.bubbleapps.io/api/1.1/wf/datos-personales',
@@ -1660,8 +1542,6 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
                 return { error: "El servicio de directorio no está configurado" };
             }
             
-            console.log(`Buscando en directorio: ${nombre} ${apellido}`);
-            
             const res = await axios.post(
                 'https://alfa-48373.bubbleapps.io/api/1.1/wf/directorio',
                 { Nombre: nombre, Apellido: apellido },
@@ -1687,8 +1567,6 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
             if (!process.env.TOKEN_API) {
                 return { error: "El servicio de incidentes no está configurado" };
             }
-            
-            console.log(`Consultando incidente: ${number}`);
             
             const res = await axios.get(
                 'https://api.supporttsmx.com.mx/TSMX/SNOW/Incident/GetIncident',
@@ -1717,8 +1595,6 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
                 return { error: "El servicio de incidentes no está configurado" };
             }
             
-            console.log(`Buscando incidentes con query: ${query}`);
-            
             const res = await axios.get(
                 'https://api.supporttsmx.com.mx/TSMX/SNOW/Incident/GetIncidentKeyList',
                 {
@@ -1745,8 +1621,6 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
             if (!process.env.TOKEN_API) {
                 return { error: "El servicio de incidentes no está configurado" };
             }
-            
-            console.log(`Creando incidente con parámetros:`, parametros);
             
             const res = await axios.post(
                 'https://api.supporttsmx.com.mx/TSMX/SNOW/Incident/CreateIncidentbyCI',
