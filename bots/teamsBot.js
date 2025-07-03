@@ -92,37 +92,55 @@ class TeamsBot extends DialogBot {
       const userId = context.activity.from.id;
       const conversationId = context.activity.conversation.id;
       const text = (context.activity.text || '').trim().toLowerCase();
+      const activityType = context.activity.type;
 
-      // CORRECCIÓN: Verificar si hay un proceso activo, pero con timeout
+      console.log(`[${userId}] Mensaje recibido: "${text}" (Tipo: ${activityType})`);
+
+      // CORRECCIÓN: Solo procesar actividades de tipo 'message'
+      if (activityType !== 'message') {
+        console.log(`[${userId}] Ignorando actividad tipo ${activityType}`);
+        return await next();
+      }
+
+      // CORRECCIÓN: Verificar si hay un proceso activo con timeout más estricto
       if (this.activeProcesses.has(userId)) {
         const processStartTime = this.activeProcesses.get(userId);
         const timeElapsed = Date.now() - processStartTime;
         
-        // Si el proceso lleva más de 30 segundos activo, limpiarlo
-        if (timeElapsed > 30000) {
-          console.warn(`Limpiando proceso activo para usuario ${userId} (${timeElapsed}ms)`);
+        // Reducir timeout a 15 segundos para evitar bloqueos largos
+        if (timeElapsed > 15000) {
+          console.warn(`[${userId}] Limpiando proceso activo obsoleto (${timeElapsed}ms)`);
           this.activeProcesses.delete(userId);
           this.activeDialogs.delete(`auth-${userId}`);
         } else {
-          console.log(`Proceso activo para usuario ${userId}, ignorando mensaje`);
+          console.log(`[${userId}] Proceso activo reciente (${timeElapsed}ms), ignorando mensaje`);
           return await next();
         }
       }
 
-      // CORRECCIÓN: Verificar diálogos activos con timeout también
-      if (this.activeDialogs.has(`auth-${userId}`)) {
-        console.log(`Diálogo de autenticación activo para usuario ${userId}`);
+      // CORRECCIÓN: Verificar diálogos activos de forma más específica
+      const dialogKey = `auth-${userId}`;
+      if (this.activeDialogs.has(dialogKey)) {
+        console.log(`[${userId}] Diálogo de autenticación activo, ignorando mensaje`);
         return await next();
       }
 
-      this.activeProcesses.set(userId, Date.now());
+      // CORRECCIÓN: Marcar proceso como activo SOLO para comandos específicos
+      const needsProcessing = this._isExplicitLoginCommand(text) || 
+                            this._isLogoutRequest(text) ||
+                            (context.activity.value && Object.keys(context.activity.value).length > 0);
+
+      if (needsProcessing) {
+        this.activeProcesses.set(userId, Date.now());
+        console.log(`[${userId}] Proceso marcado como activo para comando: ${text}`);
+      }
 
       try {
         // Recuperar estado de autenticación
         const authData = await this.authState.get(context, {});
         const isAuthenticated = authData[userId]?.authenticated === true;
 
-        console.log(`Usuario ${userId} - Autenticado: ${isAuthenticated}, Mensaje: "${text}"`);
+        console.log(`[${userId}] Estado de autenticación: ${isAuthenticated}`);
 
         // Procesar comandos específicos
         if (this._isExplicitLoginCommand(text)) {
@@ -144,12 +162,15 @@ class TeamsBot extends DialogBot {
           }
         }
       } finally {
-        // CORRECCIÓN: Limpiar proceso activo después de completar
-        this.activeProcesses.delete(userId);
+        // CORRECCIÓN: Solo limpiar si se marcó como activo
+        if (needsProcessing) {
+          this.activeProcesses.delete(userId);
+          console.log(`[${userId}] Proceso completado y limpiado`);
+        }
       }
 
     } catch (error) {
-      console.error('Error en handleMessageWithAuth:', error);
+      console.error(`[${context.activity.from.id}] Error en handleMessageWithAuth:`, error);
       await context.sendActivity('❌ Ocurrió un error inesperado. Intenta de nuevo.');
       
       const userId = context.activity.from.id;
@@ -228,41 +249,63 @@ class TeamsBot extends DialogBot {
   async _handleLoginRequest(context, userId) {
     const dialogKey = `auth-${userId}`;
     
+    console.log(`[${userId}] Iniciando proceso de login`);
+    
     // CORRECCIÓN: Verificar si ya está autenticado ANTES de iniciar proceso
     const authData = await this.authState.get(context, {});
     if (authData[userId]?.authenticated === true) {
+      console.log(`[${userId}] Ya está autenticado, saltando proceso`);
       await context.sendActivity('✅ **Ya estás autenticado**\n\n¡Puedes usar todas las funciones del bot!');
       return;
     }
     
+    // CORRECCIÓN: Verificar si hay un diálogo activo
     if (this.activeDialogs.has(dialogKey)) {
-      await context.sendActivity('⏳ Ya tienes un proceso de autenticación en curso.');
+      console.log(`[${userId}] Ya hay un proceso de autenticación activo`);
+      await context.sendActivity('⏳ Ya tienes un proceso de autenticación en curso. Por favor, completa el proceso actual.');
       return;
     }
     
+    // CORRECCIÓN: Marcar diálogo como activo ANTES de iniciar
     this.activeDialogs.add(dialogKey);
+    console.log(`[${userId}] Marcando diálogo como activo`);
 
-    // Establecer timeout para autenticación
+    // Establecer timeout para autenticación con callback mejorado
     this.authTimeoutManager.setAuthTimeout(userId, context, async (timeoutUserId) => {
+      console.log(`[${timeoutUserId}] Timeout de autenticación alcanzado`);
       this.activeDialogs.delete(`auth-${timeoutUserId}`);
       this.activeProcesses.delete(timeoutUserId);
-      console.log(`Timeout de autenticación para usuario ${timeoutUserId}`);
+      
+      try {
+        await context.sendActivity('⏰ **Tiempo de autenticación agotado**\n\n' +
+          'El proceso de autenticación ha tardado demasiado. Escribe `login` para intentar nuevamente.');
+      } catch (error) {
+        console.error(`[${timeoutUserId}] Error enviando mensaje de timeout:`, error);
+      }
     });
 
     try {
       const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
       
       if (!connectionName) {
-        await context.sendActivity('❌ **Error de configuración OAuth**');
+        console.error(`[${userId}] No se encontró connectionName en las variables de entorno`);
+        await context.sendActivity('❌ **Error de configuración OAuth**\n\nLa configuración de autenticación no está disponible. Contacta al administrador.');
         return;
       }
       
-      console.log(`Iniciando diálogo de autenticación para usuario ${userId}`);
+      console.log(`[${userId}] Iniciando diálogo OAuth con connectionName: ${connectionName}`);
+      
+      // CORRECCIÓN: Enviar mensaje de inicio una sola vez
+      await context.sendActivity('🔄 **Iniciando autenticación...**\n\nTe redirigiremos al sistema de login corporativo.');
+      
+      // Iniciar el diálogo OAuth
       await this.dialog.run(context, this.dialogState);
       
+      console.log(`[${userId}] Diálogo OAuth iniciado exitosamente`);
+      
     } catch (error) {
-      console.error('Error en _handleLoginRequest:', error);
-      await context.sendActivity('❌ Error al iniciar el proceso de autenticación.');
+      console.error(`[${userId}] Error en _handleLoginRequest:`, error);
+      await context.sendActivity('❌ **Error al iniciar autenticación**\n\nOcurrió un problema al iniciar el proceso de autenticación. Intenta nuevamente.');
       
       // CORRECCIÓN: Limpiar estados en caso de error
       this.activeDialogs.delete(dialogKey);
@@ -376,7 +419,7 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Maneja actividades invoke - VERSIÓN CORREGIDA
+   * Maneja actividades invoke - VERSIÓN CORREGIDA Y MEJORADA
    */
   async onInvokeActivity(context) {
     try {
@@ -385,23 +428,49 @@ class TeamsBot extends DialogBot {
       const userId = context.activity.from.id;
       const dialogKey = `auth-${userId}`;
 
-      console.log(`onInvokeActivity - Actividad: ${activityName}, Usuario: ${userId}`);
+      console.log(`[${userId}] onInvokeActivity - Actividad: ${activityName}`);
 
-      // CORRECCIÓN: No bloquear si hay proceso activo para actividades invoke
-      // Las actividades invoke son parte del flujo de autenticación
-
-      if (activityName === 'signin/verifyState' || activityName === 'signin/tokenExchange') {
-        console.log(`Procesando ${activityName} para usuario ${userId}`);
+      // CORRECCIÓN: Manejar actividades OAuth específicas
+      if (activityName === 'signin/verifyState') {
+        console.log(`[${userId}] Procesando signin/verifyState`);
         
         try {
-          await this.dialog.run(context, this.dialogState);
+          // Asegurarse de que el diálogo esté marcado como activo
+          if (!this.activeDialogs.has(dialogKey)) {
+            console.log(`[${userId}] Agregando diálogo a activeDialogs para verifyState`);
+            this.activeDialogs.add(dialogKey);
+          }
+          
+          const result = await this.dialog.run(context, this.dialogState);
+          console.log(`[${userId}] signin/verifyState procesado correctamente`);
+          
           return { status: 200 };
         } catch (error) {
-          console.error(`Error en ${activityName}:`, error);
+          console.error(`[${userId}] Error en signin/verifyState:`, error);
           return { status: 500 };
         }
-      } else if (activityName === 'signin/failure') {
-        console.log(`Autenticación fallida para usuario ${userId}`);
+      } 
+      else if (activityName === 'signin/tokenExchange') {
+        console.log(`[${userId}] Procesando signin/tokenExchange`);
+        
+        try {
+          // Asegurarse de que el diálogo esté marcado como activo
+          if (!this.activeDialogs.has(dialogKey)) {
+            console.log(`[${userId}] Agregando diálogo a activeDialogs para tokenExchange`);
+            this.activeDialogs.add(dialogKey);
+          }
+          
+          const result = await this.dialog.run(context, this.dialogState);
+          console.log(`[${userId}] signin/tokenExchange procesado correctamente`);
+          
+          return { status: 200 };
+        } catch (error) {
+          console.error(`[${userId}] Error en signin/tokenExchange:`, error);
+          return { status: 500 };
+        }
+      } 
+      else if (activityName === 'signin/failure') {
+        console.log(`[${userId}] Procesando signin/failure`);
         
         // CORRECCIÓN: Limpiar todos los estados en caso de falla
         this.activeDialogs.delete(dialogKey);
@@ -410,26 +479,50 @@ class TeamsBot extends DialogBot {
         
         await context.sendActivity('❌ **Autenticación fallida**\n\n' +
           'El proceso de autenticación no se completó correctamente.\n\n' +
-          'Escribe `login` para intentar nuevamente y asegúrate de completar todo el proceso.');
+          '**Posibles causas:**\n' +
+          '• Se canceló el proceso en la ventana de login\n' +
+          '• Hubo un error en el servidor de autenticación\n' +
+          '• La sesión expiró durante el proceso\n\n' +
+          '**Solución:**\n' +
+          '• Escribe `login` para intentar nuevamente\n' +
+          '• Asegúrate de completar todo el proceso sin cerrar ventanas\n' +
+          '• Verifica tu conexión a internet');
         
         return { status: 200 };
       }
+      else if (activityName === 'signin/success') {
+        console.log(`[${userId}] Procesando signin/success`);
+        
+        try {
+          const result = await this.dialog.run(context, this.dialogState);
+          console.log(`[${userId}] signin/success procesado correctamente`);
+          
+          return { status: 200 };
+        } catch (error) {
+          console.error(`[${userId}] Error en signin/success:`, error);
+          return { status: 500 };
+        }
+      }
+      else {
+        console.log(`[${userId}] Actividad invoke no reconocida: ${activityName}`);
+        // Para otras actividades invoke, usar el manejador base
+        return await super.onInvokeActivity(context);
+      }
 
-      return await super.onInvokeActivity(context);
     } catch (error) {
-      console.error('Error en onInvokeActivity:', error);
+      console.error(`[${context.activity.from.id}] Error crítico en onInvokeActivity:`, error);
       
       const userId = context.activity.from.id;
-      // CORRECCIÓN: Limpiar estados en caso de error
+      // CORRECCIÓN: Limpiar estados en caso de error crítico
       this.activeDialogs.delete(`auth-${userId}`);
       this.activeProcesses.delete(userId);
       this.authTimeoutManager.clearAuthTimeout(userId);
       
       try {
         await context.sendActivity('❌ **Error en el proceso de autenticación**\n\n' +
-          'Ocurrió un problema técnico. Intenta `login` nuevamente.');
+          'Ocurrió un problema técnico durante la autenticación. Intenta escribir `login` nuevamente.');
       } catch (sendError) {
-        console.error('Error enviando mensaje de error:', sendError);
+        console.error(`[${userId}] Error enviando mensaje de error:`, sendError);
       }
       
       return { status: 500 };
