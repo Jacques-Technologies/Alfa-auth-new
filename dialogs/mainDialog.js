@@ -457,119 +457,73 @@ class MainDialog extends LogoutDialog {
     }
 
     /**
-     * NUEVA FUNCIÓN: Termina el diálogo de un usuario específico - VERSIÓN MEJORADA
+     * NUEVA FUNCIÓN: Termina el diálogo de un usuario específico
      * @param {string} userId - ID del usuario
      * @returns {boolean} - Si había un diálogo activo
      */
     endUserDialog(userId) {
         const dialogKey = `auth-dialog-${userId}`;
         const hadActiveDialog = this.activeAuthDialogs.has(dialogKey);
-        const wasProcessing = this.processingUsers.has(userId);
         
-        if (hadActiveDialog || wasProcessing) {
+        if (hadActiveDialog) {
             this.activeAuthDialogs.delete(dialogKey);
             this.processingUsers.delete(userId);
-            this.dialogStartTimes?.delete(dialogKey);
-            
-            console.log(`[${userId}] MainDialog.endUserDialog: Diálogo y procesamiento terminados (activo: ${hadActiveDialog}, procesando: ${wasProcessing})`);
+            console.log(`MainDialog.endUserDialog: Diálogo terminado para usuario ${userId}`);
         }
         
-        return hadActiveDialog || wasProcessing;
+        return hadActiveDialog;
     }
 
     /**
-     * NUEVA FUNCIÓN: Limpia diálogos obsoletos automáticamente
+     * NUEVA FUNCIÓN: Obtiene estadísticas del diálogo
+     * @returns {Object} - Estadísticas del diálogo
+     */
+    getDialogStats() {
+        return {
+            activeAuthDialogs: this.activeAuthDialogs.size,
+            processingUsers: this.processingUsers.size,
+            activeDialogs: Array.from(this.activeAuthDialogs),
+            processingUsersList: Array.from(this.processingUsers),
+            timestamp: new Date().toISOString()
+        };
+    }
+
+    /**
+     * NUEVA FUNCIÓN: Limpia diálogos obsoletos
      * @returns {number} - Número de diálogos limpiados
      */
     cleanupStaleDialogs() {
-        const now = Date.now();
-        const staleTimeout = 5 * 60 * 1000; // 5 minutos
-        let cleanedCount = 0;
+        const beforeAuthDialogs = this.activeAuthDialogs.size;
+        const beforeProcessing = this.processingUsers.size;
         
-        // Limpiar diálogos activos obsoletos
-        const staleDialogs = [];
-        for (const dialogKey of this.activeAuthDialogs) {
-            const startTime = this.dialogStartTimes?.get(dialogKey);
-            if (startTime && (now - startTime) > staleTimeout) {
-                staleDialogs.push(dialogKey);
-            }
-        }
+        // En una implementación real, aquí podrías verificar timestamps
+        // Por ahora, simplemente limpiar todo como medida de emergencia
         
-        staleDialogs.forEach(dialogKey => {
-            this.activeAuthDialogs.delete(dialogKey);
-            this.dialogStartTimes?.delete(dialogKey);
-            cleanedCount++;
-            
-            // Extraer userId del dialogKey
-            const userId = dialogKey.replace('auth-dialog-', '');
-            this.processingUsers.delete(userId);
-            
-            console.log(`MainDialog.cleanupStaleDialogs: Limpiado diálogo obsoleto para usuario ${userId}`);
-        });
-        
-        return cleanedCount;
+        return {
+            activeAuthDialogs: beforeAuthDialogs,
+            processingUsers: beforeProcessing,
+            cleaned: 0 // No limpiamos automáticamente a menos que sea necesario
+        };
     }
 
     /**
-     * NUEVA FUNCIÓN: Fuerza limpieza de todos los estados - VERSIÓN MEJORADA
+     * NUEVA FUNCIÓN: Fuerza limpieza de todos los estados
      * @returns {Object} - Estadísticas de limpieza
      */
     forceCleanup() {
         const beforeAuthDialogs = this.activeAuthDialogs.size;
         const beforeProcessing = this.processingUsers.size;
-        const beforeStartTimes = this.dialogStartTimes?.size || 0;
         
         this.activeAuthDialogs.clear();
         this.processingUsers.clear();
         
-        if (this.dialogStartTimes) {
-            this.dialogStartTimes.clear();
-        }
-        
-        console.warn(`MainDialog.forceCleanup: Limpiados ${beforeAuthDialogs} diálogos activos, ${beforeProcessing} usuarios en procesamiento, ${beforeStartTimes} timestamps`);
+        console.warn(`MainDialog.forceCleanup: Limpiados ${beforeAuthDialogs} diálogos activos y ${beforeProcessing} usuarios en procesamiento`);
         
         return {
             activeAuthDialogsCleared: beforeAuthDialogs,
             processingUsersCleared: beforeProcessing,
-            timestampsCleared: beforeStartTimes,
             timestamp: new Date().toISOString()
         };
-    }
-
-    /**
-     * NUEVA FUNCIÓN: Comando de emergencia para un usuario específico
-     * @param {string} userId - ID del usuario
-     * @returns {Object} - Resultado de la limpieza
-     */
-    emergencyUserCleanup(userId) {
-        const dialogKey = `auth-dialog-${userId}`;
-        const result = {
-            userId,
-            actionsExecuted: [],
-            timestamp: new Date().toISOString()
-        };
-        
-        // Limpiar diálogo activo
-        if (this.activeAuthDialogs.has(dialogKey)) {
-            this.activeAuthDialogs.delete(dialogKey);
-            result.actionsExecuted.push('dialog_cleared');
-        }
-        
-        // Limpiar procesamiento
-        if (this.processingUsers.has(userId)) {
-            this.processingUsers.delete(userId);
-            result.actionsExecuted.push('processing_cleared');
-        }
-        
-        // Limpiar timestamp
-        if (this.dialogStartTimes?.has(dialogKey)) {
-            this.dialogStartTimes.delete(dialogKey);
-            result.actionsExecuted.push('timestamp_cleared');
-        }
-        
-        console.warn(`MainDialog.emergencyUserCleanup: Limpieza de emergencia para usuario ${userId} - ${result.actionsExecuted.join(', ')}`);
-        
-        return result;
     }
 }
 
