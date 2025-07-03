@@ -152,28 +152,6 @@ class OpenAIService {
             {
                 type: "function",
                 function: {
-                    name: "generar_tarjeta_empleado",
-                    description: "Genera tarjeta para consultar información del empleado cuando pregunten sobre sus datos personales, información laboral, perfil, datos de usuario o información personal.",
-                    parameters: {
-                        type: "object",
-                        properties: {}
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "generar_tarjeta_recibos",
-                    description: "Genera tarjeta para consultar recibos de nómina cuando pregunten sobre periodos de pago, recibos, nómina, pagos o comprobantes de sueldo.",
-                    parameters: {
-                        type: "object",
-                        properties: {}
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
                     name: "generar_tarjeta_matrimonio",
                     description: "Genera tarjeta para solicitar vacaciones por matrimonio cuando mencionen boda, matrimonio, casarse, luna de miel o permisos por matrimonio.",
                     parameters: {
@@ -295,66 +273,6 @@ class OpenAIService {
             );
         }
         
-        // Añadir herramientas de ServiceNow
-        if (process.env.TOKEN_API) {
-            tools.push(
-                {
-                    type: "function",
-                    function: {
-                        name: "get_incident",
-                        description: "Obtiene información de un incidente específico por su número.",
-                        parameters: {
-                            type: "object",
-                            properties: {
-                                number: { 
-                                    type: "string", 
-                                    description: "Número exacto del incidente" 
-                                }
-                            },
-                            required: ["number"]
-                        }
-                    }
-                },
-                {
-                    type: "function",
-                    function: {
-                        name: "get_incident_key_list",
-                        description: "Busca incidentes que coincidan con criterios específicos.",
-                        parameters: {
-                            type: "object",
-                            properties: {
-                                query: { 
-                                    type: "string", 
-                                    description: "Criterios de búsqueda para incidentes" 
-                                }
-                            },
-                            required: ["query"]
-                        }
-                    }
-                },
-                {
-                    type: "function",
-                    function: {
-                        name: "create_incident_by_ci",
-                        description: "Crea un nuevo incidente en ServiceNow.",
-                        parameters: {
-                            type: "object",
-                            properties: {
-                                category: { type: "string", description: "Categoría del incidente" },
-                                cmdb_ci: { type: "string", description: "Item de configuración afectado" },
-                                company: { type: "string", description: "Empresa reportante" },
-                                description: { type: "string", description: "Descripción detallada del problema" },
-                                impact: { type: "string", description: "Nivel de impacto del incidente" },
-                                short_description: { type: "string", description: "Resumen breve del problema" },
-                                subcategory: { type: "string", description: "Subcategoría específica" }
-                            },
-                            required: ["category", "cmdb_ci", "company", "description", "impact", "short_description", "subcategory"]
-                        }
-                    }
-                }
-            );
-        }
-        
         return tools;
     }
 
@@ -403,26 +321,6 @@ class OpenAIService {
                         }
                     ],
                     icon: '🎯'
-                }
-            },
-            empleado: {
-                informacion: {
-                    title: 'Mi Información',
-                    description: 'Consulta tu información básica de empleado',
-                    method: 'GET',
-                    url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/empleado',
-                    fields: [],
-                    icon: '👤'
-                }
-            },
-            recibos: {
-                periodos: {
-                    title: 'Mis Periodos de Pago',
-                    description: 'Consulta los periodos de nómina disponibles',
-                    method: 'GET',
-                    url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/recibo/periodos',
-                    fields: [],
-                    icon: '📅'
                 }
             },
             matrimonio: {
@@ -813,12 +711,6 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 return await this.ejecutarConsultarSolicitudPorId(parametros.id_solicitud);
                 
             // TARJETAS ESPECÍFICAS
-            case 'generar_tarjeta_empleado':
-                return this.generarTarjetaEmpleado();
-                
-            case 'generar_tarjeta_recibos':
-                return this.generarTarjetaRecibos();
-                
             case 'generar_tarjeta_matrimonio':
                 return this.generarTarjetaMatrimonio();
                 
@@ -828,10 +720,17 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             case 'generar_tarjeta_autorizacion':
                 return this.generarTarjetaAutorizacion(parametros.accion);
                 
-            // HERRAMIENTAS EXISTENTES
+            // HERRAMIENTAS DE BÚSQUEDA
             case 'referencias':
                 return await this.ejecutarReferencias(parametros.consulta);
                 
+<<<<<<< HEAD
+            case 'buscar_documentos':
+                return await this.ejecutarBuscarDocumentos(parametros.consulta);
+                
+            // HERRAMIENTAS DE BUBBLE
+=======
+>>>>>>> c9246c7bb1982b1e9d0aa9cee418fa3712261ede
             case 'comedor':
                 return await this.ejecutarComedor(parametros.filtro_dia);
                 
@@ -841,21 +740,12 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             case 'directorio':
                 return await this.ejecutarDirectorio(parametros.nombre, parametros.apellido);
                 
-            case 'get_incident':
-                return await this.ejecutarGetIncident(parametros.number);
-                
-            case 'get_incident_key_list':
-                return await this.ejecutarGetIncidentKeyList(parametros.query);
-                
-            case 'create_incident_by_ci':
-                return await this.ejecutarCreateIncidentByCI(parametros);
-                
             default:
                 throw new Error(`Herramienta desconocida: ${nombre}`);
         }
     }
 
-    // NUEVOS MÉTODOS PARA CONSULTAS DIRECTAS
+    // MÉTODOS PARA CONSULTAS DIRECTAS
 
     /**
      * Ejecuta consulta directa de mis solicitudes
@@ -927,7 +817,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         }
     }
 
-    // MÉTODOS MEJORADOS PARA GENERAR TARJETAS
+    // MÉTODOS PARA GENERAR TARJETAS
 
     /**
      * Ejecuta la guía de proceso de vacaciones
@@ -1185,32 +1075,6 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
     }
 
     /**
-     * Genera tarjeta para información del empleado
-     * @returns {Object} - Resultado con tarjeta
-     */
-    generarTarjetaEmpleado() {
-        const card = this.createAdaptiveCard(this.apiActions.empleado.informacion);
-        
-        return {
-            textContent: `👤 **Mi Información Personal**\n\nConsulta tus datos como empleado:`,
-            card: card
-        };
-    }
-
-    /**
-     * Genera tarjeta para recibos de nómina
-     * @returns {Object} - Resultado con tarjeta
-     */
-    generarTarjetaRecibos() {
-        const card = this.createAdaptiveCard(this.apiActions.recibos.periodos);
-        
-        return {
-            textContent: `📅 **Consulta de Recibos**\n\nRevisa los periodos de pago disponibles:`,
-            card: card
-        };
-    }
-
-    /**
      * Genera tarjeta para vacaciones por matrimonio
      * @returns {Object} - Resultado con tarjeta
      */
@@ -1252,7 +1116,7 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
     }
 
     /**
-     * Crea una tarjeta adaptativa individual (MEJORADA - SIN MÉTODO/ENDPOINT)
+     * Crea una tarjeta adaptativa individual
      * @param {Object} action - Configuración de la acción
      * @returns {Object} - Tarjeta adaptativa
      */
@@ -1288,7 +1152,7 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
             }
         ];
 
-        // Agregar campos específicos de la acción (SIN TEXTO DE PARÁMETROS)
+        // Agregar campos específicos de la acción
         if (action.fields && action.fields.length > 0) {
             action.fields.forEach(field => {
                 // Agregar etiqueta del campo
@@ -1381,6 +1245,11 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
         }
     }
 
+<<<<<<< HEAD
+    // MÉTODOS DE BÚSQUEDA
+
+=======
+>>>>>>> c9246c7bb1982b1e9d0aa9cee418fa3712261ede
     /**
      * Ejecuta búsqueda de referencias en documentos
      * @param {string} consulta - Texto de búsqueda
@@ -1479,6 +1348,95 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
     }
 
     /**
+<<<<<<< HEAD
+     * Ejecuta búsqueda vectorial avanzada en documentos específicos
+     * @param {string} consulta - Texto de búsqueda
+     * @returns {string} - Resultados formateados
+     */
+    async ejecutarBuscarDocumentos(consulta) {
+        try {
+            if (!this.searchAvailable || !this.searchClient) {
+                return "El servicio de búsqueda en documentos no está disponible en este momento.";
+            }
+            
+            console.log(`Ejecutando búsqueda vectorial avanzada para: "${consulta}"`);
+            
+            const emb = await this.openai.embeddings.create({
+                model: 'text-embedding-3-large',
+                input: consulta,
+                dimensions: 1024
+            });
+            
+            const vectorQuery = {
+                vector: emb.data[0].embedding,
+                kNearestNeighbors: 7,
+                fields: 'Embedding'
+            };
+            
+            const filterFolder = "Folder eq '1739218698126x647518027570958500'";
+
+            const searchResults = await this.searchClient.search(undefined, {
+                vectorQueries: [vectorQuery],
+                select: ['Chunk', 'Adicional', 'FileName'],
+                filter: filterFolder,
+                top: 7
+            });
+
+            const chunks = [];
+            
+            try {
+                for await (const result of searchResults.results) {
+                    const document = result.document;
+                    chunks.push(
+                        `📄 **${document.FileName || 'Documento sin nombre'}**\n` +
+                        `📝 ${document.Chunk || 'Sin contenido'}\n` +
+                        `💡 ${document.Adicional || 'Sin notas adicionales'}\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                    );
+                    if (chunks.length >= 7) break;
+                }
+            } catch (iterError) {
+                console.error('Error iterando resultados de Azure Search:', iterError.message);
+                
+                try {
+                    const resultsArray = [];
+                    for await (const result of searchResults.results) {
+                        resultsArray.push(result);
+                    }
+                    
+                    for (const result of resultsArray.slice(0, 7)) {
+                        const document = result.document;
+                        chunks.push(
+                            `📄 **${document.FileName || 'Documento sin nombre'}**\n` +
+                            `📝 ${document.Chunk || 'Sin contenido'}\n` +
+                            `💡 ${document.Adicional || 'Sin notas adicionales'}\n` +
+                            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+                        );
+                    }
+                } catch (arrayError) {
+                    console.error('Error con método array:', arrayError.message);
+                    return `Error al procesar resultados de búsqueda avanzada: ${arrayError.message}`;
+                }
+            }
+            
+            if (chunks.length === 0) {
+                return "No se encontraron documentos relevantes para esta consulta en la colección específica.";
+            }
+            
+            return `🔍 **Búsqueda Vectorial Avanzada** - Encontré ${chunks.length} resultado${chunks.length > 1 ? 's' : ''} relevante${chunks.length > 1 ? 's' : ''}:\n\n` + chunks.join('\n\n');
+            
+        } catch (error) {
+            console.error(`Error en búsqueda vectorial avanzada: ${error.message}`);
+            console.error('Stack trace:', error.stack);
+            return `No se pudo realizar la búsqueda vectorial avanzada. Error: ${error.message}`;
+        }
+    }
+
+    // MÉTODOS DE BUBBLE
+
+    /**
+=======
+>>>>>>> c9246c7bb1982b1e9d0aa9cee418fa3712261ede
      * Ejecuta consulta de menú de comedor
      * @param {string} filtro_dia - Día a consultar
      * @returns {Object} - Menú del día
@@ -1556,6 +1514,8 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
             return { error: `Error al buscar en directorio: ${error.message}` };
         }
     }
+<<<<<<< HEAD
+=======
 
     /**
      * Ejecuta consulta de incidente
@@ -1640,6 +1600,7 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
             return { error: `Error al crear incidente: ${error.message}` };
         }
     }
+>>>>>>> c9246c7bb1982b1e9d0aa9cee418fa3712261ede
 }
 
 module.exports = new OpenAIService();
