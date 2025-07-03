@@ -7,7 +7,7 @@ const { CardFactory } = require('botbuilder');
 require('dotenv').config();
 
 /**
- * Clase para gestionar la integración con OpenAI y herramientas (incluye tarjetas dinámicas y manejo estricto de vacaciones)
+ * Clase para gestionar la integración con OpenAI y herramientas (incluye tarjetas dinámicas mejoradas)
  */
 class OpenAIService {
     constructor() {
@@ -50,7 +50,7 @@ class OpenAIService {
             this.searchAvailable = false;
         }
 
-        // Definir herramientas disponibles para el agente (incluye tarjetas dinámicas)
+        // Definir herramientas disponibles para el agente
         this.tools = this.defineTools();
         
         // Configuración de acciones de API para las tarjetas
@@ -58,7 +58,7 @@ class OpenAIService {
     }
 
     /**
-     * Define las herramientas disponibles para el Agente (incluye generación de tarjetas y manejo estricto de vacaciones)
+     * Define las herramientas disponibles para el Agente
      * @returns {Array} Lista de herramientas en formato OpenAI
      */
     defineTools() {
@@ -108,6 +108,46 @@ class OpenAIService {
                             }
                         },
                         required: ["mensaje_usuario"]
+                    }
+                }
+            },
+            // HERRAMIENTAS PARA CONSULTAS DIRECTAS
+            {
+                type: "function",
+                function: {
+                    name: "consultar_mis_solicitudes",
+                    description: "Consulta directamente las solicitudes de vacaciones del usuario sin tarjeta.",
+                    parameters: {
+                        type: "object",
+                        properties: {}
+                    }
+                }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "consultar_solicitudes_dependientes",
+                    description: "Consulta directamente las solicitudes de vacaciones de los dependientes del usuario sin tarjeta.",
+                    parameters: {
+                        type: "object",
+                        properties: {}
+                    }
+                }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "consultar_solicitud_por_id",
+                    description: "Consulta directamente una solicitud específica por ID sin tarjeta.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            id_solicitud: {
+                                type: "string",
+                                description: "ID de la solicitud a consultar"
+                            }
+                        },
+                        required: ["id_solicitud"]
                     }
                 }
             },
@@ -346,14 +386,6 @@ class OpenAIService {
     defineApiActions() {
         return {
             vacaciones: {
-                consultar_solicitudes: {
-                    title: 'Mis Solicitudes de Vacaciones',
-                    description: 'Consulta todas tus solicitudes de vacaciones',
-                    method: 'GET',
-                    url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/empleado',
-                    fields: [],
-                    icon: '🏖️'
-                },
                 solicitar_vacaciones: {
                     title: 'Solicitar Vacaciones',
                     description: 'Simula o solicita vacaciones para un rango de fechas',
@@ -392,30 +424,6 @@ class OpenAIService {
                         }
                     ],
                     icon: '🎯'
-                },
-                consultar_por_id: {
-                    title: 'Consultar Solicitud por ID',
-                    description: 'Consulta una solicitud específica por su ID',
-                    method: 'GET',
-                    url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}',
-                    fields: [
-                        { 
-                            id: 'idSolicitud', 
-                            type: 'text', 
-                            label: 'ID de Solicitud', 
-                            placeholder: 'Ej: 12345', 
-                            required: true 
-                        }
-                    ],
-                    icon: '🔍'
-                },
-                dependientes: {
-                    title: 'Solicitudes de Dependientes',
-                    description: 'Consulta las solicitudes de vacaciones de tus dependientes',
-                    method: 'GET',
-                    url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/dependientes',
-                    fields: [],
-                    icon: '👨‍👩‍👧‍👦'
                 }
             },
             empleado: {
@@ -551,58 +559,10 @@ class OpenAIService {
     }
 
     /**
-     * Detecta el tipo específico de consulta de vacaciones
-     * @param {string} mensaje - Mensaje del usuario
-     * @returns {Object} - Tipo de consulta y parámetros
-     */
-    _detectarTipoVacaciones(mensaje) {
-        const mensajeLower = mensaje.toLowerCase();
-        
-        // Palabras clave para diferentes tipos
-        const keywords = {
-            matrimonio: ['matrimonio', 'boda', 'casarse', 'luna de miel', 'esposa', 'esposo'],
-            nacimiento: ['nacimiento', 'bebé', 'hijo', 'hija', 'paternidad', 'maternidad', 'parto'],
-            consultar: ['ver mis', 'consultar', 'revisar', 'estado de', 'mis solicitudes'],
-            simular: ['simular', 'verificar', 'probar', 'calcular', 'disponibilidad'],
-            solicitar: ['solicitar', 'pedir', 'quiero', 'necesito'],
-            informacion: ['información', 'info', 'tipos', 'qué vacaciones', 'cuáles']
-        };
-        
-        // Verificar tipos específicos primero
-        if (keywords.matrimonio.some(word => mensajeLower.includes(word))) {
-            return { tipo: 'matrimonio', especifico: true };
-        }
-        
-        if (keywords.nacimiento.some(word => mensajeLower.includes(word))) {
-            return { tipo: 'nacimiento', especifico: true };
-        }
-        
-        if (keywords.consultar.some(word => mensajeLower.includes(word))) {
-            return { tipo: 'consultar', especifico: true };
-        }
-        
-        if (keywords.simular.some(word => mensajeLower.includes(word))) {
-            return { tipo: 'simular', especifico: true };
-        }
-        
-        // Verificar solicitud general (requiere aclaración)
-        if (keywords.solicitar.some(word => mensajeLower.includes(word))) {
-            return { tipo: 'solicitar', especifico: false };
-        }
-        
-        // Información general
-        if (keywords.informacion.some(word => mensajeLower.includes(word))) {
-            return { tipo: 'informacion_general', especifico: true };
-        }
-        
-        return { tipo: 'general', especifico: false };
-    }
-
-    /**
-     * Procesa una consulta con el agente de OpenAI (ahora incluye respuestas con tarjetas y manejo estricto de vacaciones)
+     * Procesa una consulta con el agente de OpenAI
      * @param {string} mensaje - Mensaje del usuario
      * @param {Array} historial - Historial de conversación
-     * @returns {Object} - Respuesta del agente (puede incluir tarjetas)
+     * @returns {Object} - Respuesta del agente
      */
     async procesarMensaje(mensaje, historial) {
         try {
@@ -717,71 +677,59 @@ class OpenAIService {
     }
 
     /**
-     * Formatea historial de conversación al formato de OpenAI con manejo estricto de vacaciones
+     * Formatea historial de conversación al formato de OpenAI
      * @param {Array} historial - Historial desde CosmosDB o memoria
      * @returns {Array} - Mensajes en formato OpenAI
      */
     formatearHistorial(historial) {
-        // Mensaje de sistema inicial con instrucciones MÁS ESTRICTAS para vacaciones
+        // Mensaje de sistema inicial con instrucciones MEJORADAS
         const mensajes = [{
             role: "system",
             content: `Eres un asistente inteligente que ayuda a los empleados de Alfa Corporation. 
 
-INSTRUCCIONES ESTRICTAS PARA VACACIONES:
+INSTRUCCIONES ESPECÍFICAS PARA VACACIONES:
 
 🔒 REGLAS DE VACACIONES:
 1. Si preguntan sobre vacaciones de forma GENERAL: 
    - Explica brevemente los tipos de vacaciones disponibles
    - SIEMPRE genera la tarjeta con tipo "informacion_general"
-   - NO des información específica sin usar la tarjeta
 
 2. Si quieren SOLICITAR vacaciones:
    - OBLIGATORIO: Preguntar primero el tipo de vacación
    - Tipos disponibles: Regular, Matrimonio, Nacimiento
    - Solo después de definir el tipo, mostrar la tarjeta correspondiente
 
-3. Si quieren CONSULTAR sus vacaciones:
-   - Usar generar_tarjeta_vacaciones(tipo_solicitud: "consultar")
-   - Mostrar todas las opciones de consulta disponibles
+3. CONSULTAS DIRECTAS (SIN TARJETA):
+   - Para "mis solicitudes" o "ver mis vacaciones" → usar consultar_mis_solicitudes
+   - Para "solicitudes de dependientes" → usar consultar_solicitudes_dependientes  
+   - Para "consultar solicitud ID" → usar consultar_solicitud_por_id
 
 4. Si quieren SIMULAR vacaciones:
    - Usar generar_tarjeta_vacaciones(tipo_solicitud: "simular")
-   - Explicar que es solo para verificar disponibilidad
 
-PATRONES DE DETECCIÓN MÁS ESTRICTOS:
-- "vacaciones" + "información" = tipo "informacion_general"
+PATRONES DE DETECCIÓN:
+- "información sobre vacaciones" = tipo "informacion_general"
 - "solicitar vacaciones" SIN especificar tipo = usar guiar_proceso_vacaciones
-- "pedir vacaciones" SIN especificar tipo = usar guiar_proceso_vacaciones
+- "mis solicitudes" = consultar_mis_solicitudes (DIRECTO)
+- "solicitudes dependientes" = consultar_solicitudes_dependientes (DIRECTO)
+- "consultar solicitud 12345" = consultar_solicitud_por_id (DIRECTO)
 - "matrimonio" + "vacaciones" = generar_tarjeta_matrimonio()
 - "nacimiento" + "vacaciones" = generar_tarjeta_nacimiento()
-- "ver mis vacaciones" = generar_tarjeta_vacaciones(tipo_solicitud: "consultar")
 
-EJEMPLOS DE RESPUESTAS ESTRICTAS:
-❌ Usuario: "quiero información sobre vacaciones"
-✅ Respuesta: generar_tarjeta_vacaciones(tipo_solicitud: "informacion_general")
-
-❌ Usuario: "quiero solicitar vacaciones"  
-✅ Respuesta: guiar_proceso_vacaciones(mensaje_usuario: "quiero solicitar vacaciones")
-
-❌ Usuario: "vacaciones por matrimonio"
-✅ Respuesta: generar_tarjeta_matrimonio()
-
-OTRAS HERRAMIENTAS (sin cambios):
+OTRAS HERRAMIENTAS:
 - Solo usa "referencias" cuando pidan buscar en documentos específicos
-- Solo usa "buscar_documentos" cuando necesiten información detallada de documentos corporativos
 - Solo usa "comedor" cuando pregunten por menú del día
 - Solo usa "directorio" cuando busquen contactos de empleados
 
-SOBRE COMANDOS DEL BOT:
+COMANDOS DEL BOT:
 - Si mencionan "login", "ayuda", "token": responde directamente SIN usar herramientas
-- Para "acciones": explica que ahora las acciones aparecen automáticamente según lo que necesiten
 
 Siempre responde en español de manera amable y profesional.
                      
 Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yyyy')}`
         }];
 
-        // Convertir mensajes del historial (sin cambios)
+        // Convertir mensajes del historial
         if (historial && historial.length > 0) {
             const recentHistory = historial.slice(-10);
             
@@ -806,7 +754,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
     }
 
     /**
-     * Procesa llamadas a herramientas desde OpenAI (incluye generación de tarjetas)
+     * Procesa llamadas a herramientas desde OpenAI
      * @param {Array} toolCalls - Llamadas a herramientas solicitadas
      * @returns {Array} - Mensajes con resultados para OpenAI
      */
@@ -860,7 +808,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
     }
 
     /**
-     * Ejecuta una herramienta específica (incluye generación de tarjetas y manejo estricto de vacaciones)
+     * Ejecuta una herramienta específica
      * @param {string} nombre - Nombre de la herramienta
      * @param {Object} parametros - Parámetros para la herramienta
      * @returns {any} - Resultado de la ejecución
@@ -870,13 +818,24 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             case 'FechaHoy':
                 return DateTime.now().setZone('America/Mexico_City').toISODate();
                 
-            // HERRAMIENTAS DE VACACIONES MEJORADAS
+            // HERRAMIENTAS DE VACACIONES
             case 'generar_tarjeta_vacaciones':
                 return this.generarTarjetaVacaciones(parametros.tipo_solicitud);
                 
             case 'guiar_proceso_vacaciones':
                 return this.ejecutarGuiarProcesoVacaciones(parametros.mensaje_usuario);
                 
+            // CONSULTAS DIRECTAS (SIN TARJETA)
+            case 'consultar_mis_solicitudes':
+                return await this.ejecutarConsultarMisSolicitudes();
+                
+            case 'consultar_solicitudes_dependientes':
+                return await this.ejecutarConsultarSolicitudesDependientes();
+                
+            case 'consultar_solicitud_por_id':
+                return await this.ejecutarConsultarSolicitudPorId(parametros.id_solicitud);
+                
+            // TARJETAS ESPECÍFICAS
             case 'generar_tarjeta_empleado':
                 return this.generarTarjetaEmpleado();
                 
@@ -922,7 +881,79 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         }
     }
 
-    // MÉTODOS PARA GENERAR TARJETAS DINÁMICAS CON MANEJO ESTRICTO
+    // NUEVOS MÉTODOS PARA CONSULTAS DIRECTAS
+
+    /**
+     * Ejecuta consulta directa de mis solicitudes
+     * @returns {string} - Resultado de la consulta
+     */
+    async ejecutarConsultarMisSolicitudes() {
+        try {
+            const response = await axios.get(
+                'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/empleado',
+                {
+                    headers: {
+                        'Authorization': `Bearer ${process.env.TOKEN_SIRH || 'TOKEN_NO_CONFIGURADO'}`
+                    },
+                    timeout: 10000
+                }
+            );
+            
+            return `📋 **Mis Solicitudes de Vacaciones**\n\n${JSON.stringify(response.data, null, 2)}`;
+        } catch (error) {
+            console.error('Error consultando mis solicitudes:', error.message);
+            return `❌ Error al consultar tus solicitudes: ${error.message}`;
+        }
+    }
+
+    /**
+     * Ejecuta consulta directa de solicitudes de dependientes
+     * @returns {string} - Resultado de la consulta
+     */
+    async ejecutarConsultarSolicitudesDependientes() {
+        try {
+            const response = await axios.get(
+                'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/dependientes',
+                {
+                    headers: {
+                        'Authorization': `Bearer ${process.env.TOKEN_SIRH || 'TOKEN_NO_CONFIGURADO'}`
+                    },
+                    timeout: 10000
+                }
+            );
+            
+            return `👨‍👩‍👧‍👦 **Solicitudes de Dependientes**\n\n${JSON.stringify(response.data, null, 2)}`;
+        } catch (error) {
+            console.error('Error consultando solicitudes de dependientes:', error.message);
+            return `❌ Error al consultar solicitudes de dependientes: ${error.message}`;
+        }
+    }
+
+    /**
+     * Ejecuta consulta directa de solicitud por ID
+     * @param {string} idSolicitud - ID de la solicitud
+     * @returns {string} - Resultado de la consulta
+     */
+    async ejecutarConsultarSolicitudPorId(idSolicitud) {
+        try {
+            const response = await axios.get(
+                `https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/${idSolicitud}`,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${process.env.TOKEN_SIRH || 'TOKEN_NO_CONFIGURADO'}`
+                    },
+                    timeout: 10000
+                }
+            );
+            
+            return `🔍 **Solicitud ID: ${idSolicitud}**\n\n${JSON.stringify(response.data, null, 2)}`;
+        } catch (error) {
+            console.error(`Error consultando solicitud ${idSolicitud}:`, error.message);
+            return `❌ Error al consultar la solicitud ${idSolicitud}: ${error.message}`;
+        }
+    }
+
+    // MÉTODOS MEJORADOS PARA GENERAR TARJETAS
 
     /**
      * Ejecuta la guía de proceso de vacaciones
@@ -952,16 +983,8 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
    • Requiere fecha de nacimiento
    • Beneficio familiar
 
-**¿Cuál de estos tipos necesitas?** 
-
-Responde con:
-• "Vacaciones regulares"
-• "Por matrimonio" 
-• "Por nacimiento"
-
-O especifica directamente lo que necesitas y te mostraré las opciones correspondientes.`,
+**¿Cuál de estos tipos necesitas?**`,
             
-            // Generar tarjeta informativa
             card: this.createVacationGuideCard()
         };
     }
@@ -1122,7 +1145,7 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
     }
 
     /**
-     * Genera tarjetas para solicitudes de vacaciones con manejo estricto
+     * Genera tarjetas para solicitudes de vacaciones
      * @param {string} tipoSolicitud - Tipo de solicitud de vacaciones
      * @returns {Object} - Resultado con tarjeta(s)
      */
@@ -1151,19 +1174,9 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
 • Días por nacimiento de hijo(a)
 • Beneficio familiar
 
-**Opciones de gestión:**`;
+**Usa las opciones a continuación para acceder a las funciones:**`;
                 
-                // Agregar todas las acciones de consulta
-                actions.push(this.apiActions.vacaciones.consultar_solicitudes);
-                actions.push(this.apiActions.vacaciones.consultar_por_id);
-                actions.push(this.apiActions.vacaciones.dependientes);
-                break;
-                
-            case 'consultar':
-                textContent = `🔍 **Consultar Mis Vacaciones**\n\nAccede a la información de tus solicitudes:`;
-                actions.push(this.apiActions.vacaciones.consultar_solicitudes);
-                actions.push(this.apiActions.vacaciones.consultar_por_id);
-                actions.push(this.apiActions.vacaciones.dependientes);
+                actions.push(this.apiActions.vacaciones.solicitar_vacaciones);
                 break;
                 
             case 'solicitar':
@@ -1185,7 +1198,6 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
                 
             default:
                 textContent = `🏖️ **Gestión de Vacaciones**\n\nSelecciona la opción que necesitas:`;
-                actions.push(this.apiActions.vacaciones.consultar_solicitudes);
                 actions.push(this.apiActions.vacaciones.solicitar_vacaciones);
                 break;
         }
@@ -1266,7 +1278,7 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
     }
 
     /**
-     * Crea una tarjeta adaptativa individual
+     * Crea una tarjeta adaptativa individual (MEJORADA - SIN MÉTODO/ENDPOINT)
      * @param {Object} action - Configuración de la acción
      * @returns {Object} - Tarjeta adaptativa
      */
@@ -1299,33 +1311,11 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
                 wrap: true,
                 spacing: 'Medium',
                 color: 'Default'
-            },
-            // Información del método
-            {
-                type: 'FactSet',
-                facts: [
-                    {
-                        title: 'Método:',
-                        value: action.method
-                    },
-                    {
-                        title: 'Endpoint:',
-                        value: action.url.split('/').pop() || 'API'
-                    }
-                ],
-                spacing: 'Medium'
             }
         ];
 
-        // Agregar campos específicos de la acción
+        // Agregar campos específicos de la acción (SIN TEXTO DE PARÁMETROS)
         if (action.fields && action.fields.length > 0) {
-            bodyElements.push({
-                type: 'TextBlock',
-                text: '📝 Parámetros adicionales:',
-                weight: 'Bolder',
-                spacing: 'Large'
-            });
-
             action.fields.forEach(field => {
                 // Agregar etiqueta del campo
                 bodyElements.push({
@@ -1338,15 +1328,6 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
                 // Agregar input del campo
                 const inputElement = this._createInputElement(field);
                 bodyElements.push(inputElement);
-            });
-        } else {
-            // Si no hay campos, agregar nota informativa
-            bodyElements.push({
-                type: 'TextBlock',
-                text: '✅ Esta acción no requiere parámetros adicionales',
-                isSubtle: true,
-                spacing: 'Large',
-                horizontalAlignment: 'Center'
             });
         }
 
@@ -1426,7 +1407,7 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
         }
     }
 
-    // MÉTODOS EXISTENTES (con pequeñas mejoras)
+    // MÉTODOS EXISTENTES (referencias, búsqueda, etc.)
 
     /**
      * Ejecuta búsqueda de referencias en documentos
@@ -1435,21 +1416,18 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
      */
     async ejecutarReferencias(consulta) {
         try {
-            // Verificar que el servicio de búsqueda esté disponible
             if (!this.searchAvailable || !this.searchClient) {
                 return "El servicio de búsqueda en documentos no está disponible en este momento.";
             }
             
             console.log(`Buscando referencias para: "${consulta}"`);
             
-            /* 1. Embedding del texto */
             const emb = await this.openai.embeddings.create({
                 model: 'text-embedding-3-large',
                 input: consulta,
                 dimensions: 1024
             });
             
-            /* 2. Consulta vectorial */
             const vectorQuery = {
                 vector: emb.data[0].embedding,
                 kNearestNeighbors: 5,
@@ -1481,11 +1459,9 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
                 top: 5
             });
 
-            /* 3. Formatear resultados - MÉTODO CORREGIDO */
             const chunks = [];
             
             try {
-                // Iterar correctamente sobre los resultados de Azure Search
                 for await (const result of searchResults.results) {
                     const document = result.document;
                     chunks.push(
@@ -1499,7 +1475,6 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
             } catch (iterError) {
                 console.error('Error iterando resultados de Azure Search:', iterError.message);
                 
-                // Método alternativo: convertir a array primero
                 try {
                     const resultsArray = [];
                     for await (const result of searchResults.results) {
@@ -1532,6 +1507,7 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
             return `No se pudo realizar la búsqueda en documentos. Error: ${error.message}`;
         }
     }
+
     /**
      * Ejecuta búsqueda vectorial avanzada en documentos específicos
      * @param {string} consulta - Texto de búsqueda
@@ -1539,42 +1515,36 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
      */
     async ejecutarBuscarDocumentos(consulta) {
         try {
-            // Verificar que el servicio de búsqueda esté disponible
             if (!this.searchAvailable || !this.searchClient) {
                 return "El servicio de búsqueda en documentos no está disponible en este momento.";
             }
             
             console.log(`Ejecutando búsqueda vectorial avanzada para: "${consulta}"`);
             
-            /* 1. Embedding del texto */
             const emb = await this.openai.embeddings.create({
                 model: 'text-embedding-3-large',
                 input: consulta,
                 dimensions: 1024
             });
             
-            /* 2. Consulta vectorial con parámetros específicos */
             const vectorQuery = {
                 vector: emb.data[0].embedding,
-                kNearestNeighbors: 7,  // Más resultados que la búsqueda normal
+                kNearestNeighbors: 7,
                 fields: 'Embedding'
             };
             
-            // Filtrar solo por el folder específico
             const filterFolder = "Folder eq '1739218698126x647518027570958500'";
 
             const searchResults = await this.searchClient.search(undefined, {
                 vectorQueries: [vectorQuery],
                 select: ['Chunk', 'Adicional', 'FileName'],
                 filter: filterFolder,
-                top: 7  // Más resultados que la búsqueda normal
+                top: 7
             });
 
-            /* 3. Formatear resultados - MÉTODO CORREGIDO */
             const chunks = [];
             
             try {
-                // Iterar correctamente sobre los resultados de Azure Search
                 for await (const result of searchResults.results) {
                     const document = result.document;
                     chunks.push(
@@ -1588,7 +1558,6 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
             } catch (iterError) {
                 console.error('Error iterando resultados de Azure Search:', iterError.message);
                 
-                // Método alternativo: convertir a array primero
                 try {
                     const resultsArray = [];
                     for await (const result of searchResults.results) {
@@ -1630,7 +1599,6 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
      */
     async ejecutarComedor(filtro_dia) {
         try {
-            // Verificar que el token de Bubble esté configurado
             if (!process.env.TOKEN_BUBBLE) {
                 return { error: "El servicio de comedor no está configurado" };
             }
@@ -1659,7 +1627,6 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
      */
     async ejecutarInformacionPersonal(email) {
         try {
-            // Verificar que el token de Bubble esté configurado
             if (!process.env.TOKEN_BUBBLE) {
                 return { error: "El servicio de información personal no está configurado" };
             }
@@ -1689,7 +1656,6 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
      */
     async ejecutarDirectorio(nombre, apellido) {
         try {
-            // Verificar que el token de Bubble esté configurado
             if (!process.env.TOKEN_BUBBLE) {
                 return { error: "El servicio de directorio no está configurado" };
             }
@@ -1718,7 +1684,6 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
      */
     async ejecutarGetIncident(number) {
         try {
-            // Verificar que el token de API esté configurado
             if (!process.env.TOKEN_API) {
                 return { error: "El servicio de incidentes no está configurado" };
             }
@@ -1748,7 +1713,6 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
      */
     async ejecutarGetIncidentKeyList(query) {
         try {
-            // Verificar que el token de API esté configurado
             if (!process.env.TOKEN_API) {
                 return { error: "El servicio de incidentes no está configurado" };
             }
@@ -1778,7 +1742,6 @@ O especifica directamente lo que necesitas y te mostraré las opciones correspon
      */
     async ejecutarCreateIncidentByCI(parametros) {
         try {
-            // Verificar que el token de API esté configurado
             if (!process.env.TOKEN_API) {
                 return { error: "El servicio de incidentes no está configurado" };
             }
