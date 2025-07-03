@@ -212,23 +212,6 @@ class OpenAIService {
                             required: ["consulta"]
                         }
                     }
-                },
-                {
-                    type: "function",
-                    function: {
-                        name: "buscar_documentos",
-                        description: "Busca información específica en documentos usando búsqueda vectorial avanzada. Usar cuando el usuario necesite información detallada de documentos corporativos.",
-                        parameters: {
-                            type: "object",
-                            properties: {
-                                consulta: { 
-                                    type: "string", 
-                                    description: "Consulta específica para buscar en documentos" 
-                                }
-                            },
-                            required: ["consulta"]
-                        }
-                    }
                 }
             );
         }
@@ -746,9 +729,6 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             // HERRAMIENTAS DE BÚSQUEDA
             case 'referencias':
                 return await this.ejecutarReferencias(parametros.consulta);
-                
-            case 'buscar_documentos':
-                return await this.ejecutarBuscarDocumentos(parametros.consulta);
                 
             // HERRAMIENTAS DE BUBBLE
             case 'comedor':
@@ -1363,90 +1343,6 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
             console.error(`Error en referencias: ${error.message}`);
             console.error('Stack trace:', error.stack);
             return `No se pudo realizar la búsqueda en documentos. Error: ${error.message}`;
-        }
-    }
-
-    /**
-     * Ejecuta búsqueda vectorial avanzada en documentos específicos
-     * @param {string} consulta - Texto de búsqueda
-     * @returns {string} - Resultados formateados
-     */
-    async ejecutarBuscarDocumentos(consulta) {
-        try {
-            if (!this.searchAvailable || !this.searchClient) {
-                return "El servicio de búsqueda en documentos no está disponible en este momento.";
-            }
-            
-            console.log(`Ejecutando búsqueda vectorial avanzada para: "${consulta}"`);
-            
-            const emb = await this.openai.embeddings.create({
-                model: 'text-embedding-3-large',
-                input: consulta,
-                dimensions: 1024
-            });
-            
-            const vectorQuery = {
-                vector: emb.data[0].embedding,
-                kNearestNeighbors: 7,
-                fields: 'Embedding'
-            };
-            
-            const filterFolder = "Folder eq '1739218698126x647518027570958500'";
-
-            const searchResults = await this.searchClient.search(undefined, {
-                vectorQueries: [vectorQuery],
-                select: ['Chunk', 'Adicional', 'FileName'],
-                filter: filterFolder,
-                top: 7
-            });
-
-            const chunks = [];
-            
-            try {
-                for await (const result of searchResults.results) {
-                    const document = result.document;
-                    chunks.push(
-                        `📄 **${document.FileName || 'Documento sin nombre'}**\n` +
-                        `📝 ${document.Chunk || 'Sin contenido'}\n` +
-                        `💡 ${document.Adicional || 'Sin notas adicionales'}\n` +
-                        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-                    );
-                    if (chunks.length >= 7) break;
-                }
-            } catch (iterError) {
-                console.error('Error iterando resultados de Azure Search:', iterError.message);
-                
-                try {
-                    const resultsArray = [];
-                    for await (const result of searchResults.results) {
-                        resultsArray.push(result);
-                    }
-                    
-                    for (const result of resultsArray.slice(0, 7)) {
-                        const document = result.document;
-                        chunks.push(
-                            `📄 **${document.FileName || 'Documento sin nombre'}**\n` +
-                            `📝 ${document.Chunk || 'Sin contenido'}\n` +
-                            `💡 ${document.Adicional || 'Sin notas adicionales'}\n` +
-                            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-                        );
-                    }
-                } catch (arrayError) {
-                    console.error('Error con método array:', arrayError.message);
-                    return `Error al procesar resultados de búsqueda avanzada: ${arrayError.message}`;
-                }
-            }
-            
-            if (chunks.length === 0) {
-                return "No se encontraron documentos relevantes para esta consulta en la colección específica.";
-            }
-            
-            return `🔍 **Búsqueda Vectorial Avanzada** - Encontré ${chunks.length} resultado${chunks.length > 1 ? 's' : ''} relevante${chunks.length > 1 ? 's' : ''}:\n\n` + chunks.join('\n\n');
-            
-        } catch (error) {
-            console.error(`Error en búsqueda vectorial avanzada: ${error.message}`);
-            console.error('Stack trace:', error.stack);
-            return `No se pudo realizar la búsqueda vectorial avanzada. Error: ${error.message}`;
         }
     }
 
