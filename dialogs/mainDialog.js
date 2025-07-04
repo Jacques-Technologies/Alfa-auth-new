@@ -370,7 +370,7 @@ class MainDialog extends LogoutDialog {
                     headers: {
                         'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`
                     },
-                    timeout: 10000
+                    timeout: 50000
                 }
             );
 
