@@ -238,7 +238,6 @@ class MainDialog extends LogoutDialog {
                     }
                 } else {
                     console.error('MainDialog.loginStep: No se pudo obtener la instancia del bot');
-                    await stepContext.context.sendActivity('❌ **Error interno**\n\nNo se pudo completar la autenticación. Contacta al administrador.');
                     return await stepContext.endDialog();
                 }
             } catch (error) {
@@ -258,9 +257,6 @@ class MainDialog extends LogoutDialog {
                 setTimeout(() => {
                     this.cancelledMessagesSent.delete(messageKey);
                 }, 30000);
-
-                await stepContext.context.sendActivity('❌ **Autenticación no completada**\n\n' +
-                    'Escribe `login` para intentar nuevamente.');
             }
 
             return await stepContext.endDialog();
