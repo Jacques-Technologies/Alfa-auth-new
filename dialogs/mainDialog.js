@@ -22,13 +22,13 @@ class MainDialog extends LogoutDialog {
             throw new Error('Configuración OAuth faltante: connectionName es requerido');
         }
 
-        // Configurar OAuth Prompt
+        // CORREGIDO: Configurar OAuth Prompt SIN texto duplicado
         this.addDialog(new OAuthPrompt(OAUTH_PROMPT, {
             connectionName: connectionName,
-            text: '🔐 **Autenticación Requerida**\n\nPara acceder a las funciones del bot, necesitas iniciar sesión con tu cuenta corporativa.',
             title: 'Iniciar Sesión - Alfa Bot',
             timeout: 300000, // 5 minutos
             endOnInvalidMessage: true
+            // ELIMINADO: text property que causaba duplicación
         }));
 
         // Configurar diálogo principal
@@ -44,7 +44,7 @@ class MainDialog extends LogoutDialog {
         this.activeAuthDialogs = new Set();
         this.processingUsers = new Set();
         
-        // NUEVO: Control de mensajes enviados para evitar duplicados
+        // Control de mensajes enviados para evitar duplicados
         this.cancelledMessagesSent = new Set();
         
         // Registrar instancia globalmente
@@ -140,7 +140,7 @@ class MainDialog extends LogoutDialog {
     }
 
     /**
-     * Prompts the user to sign in
+     * Prompts the user to sign in - CORREGIDO: Un solo mensaje
      */
     async promptStep(stepContext) {
         const userId = stepContext.context.activity.from.id;
@@ -170,7 +170,10 @@ class MainDialog extends LogoutDialog {
 
         try {
             console.log(`MainDialog.promptStep: Iniciando OAuth prompt para usuario ${userId}`);
-            await stepContext.context.sendActivity('🔄 **Iniciando autenticación...**\n\nTe redirigiremos al sistema de login corporativo.');
+            
+            // CORREGIDO: Un solo mensaje de autenticación claro y descriptivo
+            await stepContext.context.sendActivity('🔐 **Autenticación Requerida**\n\nPara acceder a las funciones del bot, necesitas iniciar sesión con tu cuenta corporativa.\n\n🔄 Te redirigiremos al sistema de login...');
+            
             return await stepContext.beginDialog(OAUTH_PROMPT);
         } catch (error) {
             console.error(`MainDialog.promptStep: Error para usuario ${userId}:`, error);
@@ -347,7 +350,6 @@ class MainDialog extends LogoutDialog {
         if (hadActiveDialog) {
             this.activeAuthDialogs.delete(dialogKey);
             this.processingUsers.delete(userId);
-            // NUEVO: Limpiar mensajes de cancelación mostrados
             this.cancelledMessagesSent.delete(`cancelled_${userId}`);
             console.log(`MainDialog.endUserDialog: Diálogo terminado para usuario ${userId}`);
         }
@@ -393,7 +395,7 @@ class MainDialog extends LogoutDialog {
         
         this.activeAuthDialogs.clear();
         this.processingUsers.clear();
-        this.cancelledMessagesSent.clear(); // NUEVO: Limpiar también mensajes
+        this.cancelledMessagesSent.clear();
         
         console.warn(`MainDialog.forceCleanup: Limpiados ${beforeAuthDialogs} diálogos activos, ${beforeProcessing} usuarios en procesamiento y ${beforeMessages} mensajes de cancelación`);
         
@@ -406,7 +408,7 @@ class MainDialog extends LogoutDialog {
     }
 
     /**
-     * NUEVO: Limpieza de emergencia para usuario específico
+     * Limpieza de emergencia para usuario específico
      */
     emergencyUserCleanup(userId) {
         const actionsExecuted = [];
