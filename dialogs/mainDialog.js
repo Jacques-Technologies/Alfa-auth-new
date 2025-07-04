@@ -6,8 +6,7 @@ const MAIN_WATERFALL_DIALOG = 'MainWaterfallDialog';
 const OAUTH_PROMPT = 'OAuthPrompt';
 
 /**
- * MainDialog class que maneja el flujo principal de autenticación - VERSIÓN CORREGIDA
-
+ * MainDialog class que maneja el flujo principal de autenticación - VERSIÓN SIN DUPLICADOS
  */
 class MainDialog extends LogoutDialog {
     /**
@@ -45,14 +44,15 @@ class MainDialog extends LogoutDialog {
         this.activeAuthDialogs = new Set();
         this.processingUsers = new Set();
         
+        // NUEVO: Control de mensajes enviados para evitar duplicados
+        this.cancelledMessagesSent = new Set();
+        
         // Registrar instancia globalmente
         global.mainDialogInstance = this;
     }
 
     /**
-     * The run method handles the incoming activity - VERSIÓN CORREGIDA
-     * @param {TurnContext} context - The context object for the turn.
-     * @param {StatePropertyAccessor} accessor - The state property accessor for the dialog state.
+     * The run method handles the incoming activity
      */
     async run(context, accessor) {
         const userId = context.activity.from.id;
@@ -60,13 +60,13 @@ class MainDialog extends LogoutDialog {
 
         console.log(`MainDialog.run - Usuario: ${userId}, Tipo de actividad: ${context.activity.type}`);
         
-        // CORRECCIÓN: Verificar si ya se está procesando este usuario con timeout
+        // Verificar si ya se está procesando este usuario con timeout
         if (this.processingUsers.has(userId)) {
             console.log(`MainDialog: Usuario ${userId} ya está siendo procesado`);
             return;
         }
 
-        // CORRECCIÓN: Verificar si ya está autenticado antes de iniciar diálogo
+        // Verificar si ya está autenticado antes de iniciar diálogo
         const bot = context.turnState.get('bot');
         if (bot && typeof bot.isUserAuthenticated === 'function') {
             const isAuthenticated = bot.isUserAuthenticated(userId);
@@ -76,7 +76,7 @@ class MainDialog extends LogoutDialog {
             }
         }
         
-        // CORRECCIÓN: Verificar estado persistente también
+        // Verificar estado persistente también
         const userState = context.turnState.get('UserState');
         if (userState) {
             const authState = userState.createProperty('AuthState');
@@ -114,12 +114,12 @@ class MainDialog extends LogoutDialog {
                     console.error(`MainDialog: Error iniciando diálogo para ${userId}:`, beginError);
                     throw beginError;
                 } finally {
-                    // CORRECCIÓN: Limpiar en finally para asegurar que siempre se ejecute
+                    // Limpiar en finally para asegurar que siempre se ejecute
                     this.activeAuthDialogs.delete(dialogKey);
                     console.log(`MainDialog: Diálogo finalizado para usuario ${userId}`);
                 }
             } else {
-                // CORRECCIÓN: Limpiar si el diálogo ha terminado
+                // Limpiar si el diálogo ha terminado
                 if (results.status === DialogTurnStatus.complete || results.status === DialogTurnStatus.cancelled) {
                     this.activeAuthDialogs.delete(dialogKey);
                     console.log(`MainDialog: Diálogo completado/cancelado para usuario ${userId}`);
@@ -128,27 +128,26 @@ class MainDialog extends LogoutDialog {
         } catch (error) {
             console.error(`MainDialog: Error en run() para usuario ${userId}:`, error);
 
-            // CORRECCIÓN: Limpiar estado de error
+            // Limpiar estado de error
             this.activeAuthDialogs.delete(dialogKey);
             this.processingUsers.delete(userId);
 
             throw error;
         } finally {
-            // CORRECCIÓN: Siempre limpiar el estado de procesamiento
+            // Siempre limpiar el estado de procesamiento
             this.processingUsers.delete(userId);
         }
     }
 
     /**
-     * Prompts the user to sign in - VERSIÓN CORREGIDA
-     * @param {WaterfallStepContext} stepContext - The waterfall step context.
+     * Prompts the user to sign in
      */
     async promptStep(stepContext) {
         const userId = stepContext.context.activity.from.id;
 
         console.log(`MainDialog.promptStep - Usuario: ${userId}`);
         
-        // CORRECCIÓN: Verificar nuevamente si el usuario ya está autenticado
+        // Verificar nuevamente si el usuario ya está autenticado
         const bot = stepContext.context.turnState.get('bot');
         if (bot && typeof bot.isUserAuthenticated === 'function') {
             const isAuthenticated = bot.isUserAuthenticated(userId);
@@ -181,8 +180,7 @@ class MainDialog extends LogoutDialog {
     }
 
     /**
-     * Handles the login step - VERSIÓN CORREGIDA
-     * @param {WaterfallStepContext} stepContext - The waterfall step context.
+     * Handles the login step - VERSIÓN SIN MENSAJE LARGO DUPLICADO
      */
     async loginStep(stepContext) {
         const tokenResponse = stepContext.result;
@@ -251,21 +249,26 @@ class MainDialog extends LogoutDialog {
         } else {
             console.warn(`MainDialog.loginStep: Usuario ${userId} canceló la autenticación`);
 
-            await stepContext.context.sendActivity('❌ **Autenticación cancelada**\n\n' +
-                '🚫 **Has cerrado la ventana de autenticación sin completar el proceso.**\n\n' +
-                '**Para usar el bot necesitas autenticarte:**\n' +
-                '• Escribe `login` para intentar nuevamente\n' +
-                '• Asegúrate de completar todo el proceso de autenticación\n' +
-                '• Si continúas teniendo problemas, contacta al administrador\n\n' +
-                '💡 **Importante**: Sin autenticación no puedes acceder a las funciones del bot.');
+            // CORREGIDO: Mensaje más simple y sin duplicación
+            const messageKey = `cancelled_${userId}`;
+            if (!this.cancelledMessagesSent.has(messageKey)) {
+                this.cancelledMessagesSent.add(messageKey);
+                
+                // Limpiar mensaje después de 30 segundos
+                setTimeout(() => {
+                    this.cancelledMessagesSent.delete(messageKey);
+                }, 30000);
+
+                await stepContext.context.sendActivity('❌ **Autenticación no completada**\n\n' +
+                    'Escribe `login` para intentar nuevamente.');
+            }
 
             return await stepContext.endDialog();
         }
     }
 
     /**
-     * Final step of the authentication dialog - VERSIÓN CORREGIDA
-     * @param {WaterfallStepContext} stepContext - The waterfall step context.
+     * Final step of the authentication dialog
      */
     async finalStep(stepContext) {
         const userId = stepContext.context.activity.from.id;
@@ -276,9 +279,6 @@ class MainDialog extends LogoutDialog {
 
     /**
      * Validates an OAuth token by making a test request
-     * @param {string} token - The OAuth token to validate
-     * @returns {boolean} - Whether the token is valid
-     * @private
      */
     async validateOAuthToken(token) {
         try {
@@ -293,7 +293,7 @@ class MainDialog extends LogoutDialog {
                     headers: {
                         'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`
                     },
-                    timeout: 10000 // Aumentar timeout
+                    timeout: 10000
                 }
             );
 
@@ -313,9 +313,6 @@ class MainDialog extends LogoutDialog {
 
     /**
      * Extracts user information from an OAuth JWT token
-     * @param {string} token - The OAuth JWT token
-     * @returns {Object} - User information extracted from token
-     * @private
      */
     async extractUserInfoFromToken(token) {
         try {
@@ -345,9 +342,7 @@ class MainDialog extends LogoutDialog {
     }
 
     /**
-     * NUEVA FUNCIÓN: Termina el diálogo de un usuario específico
-     * @param {string} userId - ID del usuario
-     * @returns {boolean} - Si había un diálogo activo
+     * Termina el diálogo de un usuario específico
      */
     endUserDialog(userId) {
         const dialogKey = `auth-dialog-${userId}`;
@@ -356,6 +351,8 @@ class MainDialog extends LogoutDialog {
         if (hadActiveDialog) {
             this.activeAuthDialogs.delete(dialogKey);
             this.processingUsers.delete(userId);
+            // NUEVO: Limpiar mensajes de cancelación mostrados
+            this.cancelledMessagesSent.delete(`cancelled_${userId}`);
             console.log(`MainDialog.endUserDialog: Diálogo terminado para usuario ${userId}`);
         }
         
@@ -363,13 +360,13 @@ class MainDialog extends LogoutDialog {
     }
 
     /**
-     * NUEVA FUNCIÓN: Obtiene estadísticas del diálogo
-     * @returns {Object} - Estadísticas del diálogo
+     * Obtiene estadísticas del diálogo
      */
     getDialogStats() {
         return {
             activeAuthDialogs: this.activeAuthDialogs.size,
             processingUsers: this.processingUsers.size,
+            cancelledMessagesSent: this.cancelledMessagesSent.size,
             activeDialogs: Array.from(this.activeAuthDialogs),
             processingUsersList: Array.from(this.processingUsers),
             timestamp: new Date().toISOString()
@@ -377,39 +374,67 @@ class MainDialog extends LogoutDialog {
     }
 
     /**
-     * NUEVA FUNCIÓN: Limpia diálogos obsoletos
-     * @returns {number} - Número de diálogos limpiados
+     * Limpia diálogos obsoletos
      */
     cleanupStaleDialogs() {
         const beforeAuthDialogs = this.activeAuthDialogs.size;
         const beforeProcessing = this.processingUsers.size;
         
-        // En una implementación real, aquí podrías verificar timestamps
-        // Por ahora, simplemente limpiar todo como medida de emergencia
-        
         return {
             activeAuthDialogs: beforeAuthDialogs,
             processingUsers: beforeProcessing,
-            cleaned: 0 // No limpiamos automáticamente a menos que sea necesario
+            cleaned: 0
         };
     }
 
     /**
-     * NUEVA FUNCIÓN: Fuerza limpieza de todos los estados
-     * @returns {Object} - Estadísticas de limpieza
+     * Fuerza limpieza de todos los estados
      */
     forceCleanup() {
         const beforeAuthDialogs = this.activeAuthDialogs.size;
         const beforeProcessing = this.processingUsers.size;
+        const beforeMessages = this.cancelledMessagesSent.size;
         
         this.activeAuthDialogs.clear();
         this.processingUsers.clear();
+        this.cancelledMessagesSent.clear(); // NUEVO: Limpiar también mensajes
         
-        console.warn(`MainDialog.forceCleanup: Limpiados ${beforeAuthDialogs} diálogos activos y ${beforeProcessing} usuarios en procesamiento`);
+        console.warn(`MainDialog.forceCleanup: Limpiados ${beforeAuthDialogs} diálogos activos, ${beforeProcessing} usuarios en procesamiento y ${beforeMessages} mensajes de cancelación`);
         
         return {
             activeAuthDialogsCleared: beforeAuthDialogs,
             processingUsersCleared: beforeProcessing,
+            cancelledMessagesCleared: beforeMessages,
+            timestamp: new Date().toISOString()
+        };
+    }
+
+    /**
+     * NUEVO: Limpieza de emergencia para usuario específico
+     */
+    emergencyUserCleanup(userId) {
+        const actionsExecuted = [];
+        
+        const dialogKey = `auth-dialog-${userId}`;
+        if (this.activeAuthDialogs.has(dialogKey)) {
+            this.activeAuthDialogs.delete(dialogKey);
+            actionsExecuted.push('active_auth_dialog_removed');
+        }
+        
+        if (this.processingUsers.has(userId)) {
+            this.processingUsers.delete(userId);
+            actionsExecuted.push('processing_user_removed');
+        }
+        
+        const messageKey = `cancelled_${userId}`;
+        if (this.cancelledMessagesSent.has(messageKey)) {
+            this.cancelledMessagesSent.delete(messageKey);
+            actionsExecuted.push('cancelled_message_cleared');
+        }
+        
+        return {
+            userId,
+            actionsExecuted,
             timestamp: new Date().toISOString()
         };
     }

@@ -1,4 +1,4 @@
-// utilities/emergency_recovery.js - Utilidad de recuperación de emergencia
+// utilities/emergency_recovery.js - Utilidad de recuperación de emergencia - VERSIÓN CORREGIDA
 
 class EmergencyRecovery {
     constructor() {
@@ -50,6 +50,12 @@ class EmergencyRecovery {
                 if (bot.authenticatedUsers && bot.authenticatedUsers.has(userId)) {
                     bot.authenticatedUsers.delete(userId);
                     recoveryResult.actionsExecuted.push('authenticated_user_cleared');
+                }
+                
+                // NUEVO: Limpiar mensajes de autenticación mostrados
+                if (bot.authMessagesShown && bot.authMessagesShown.has(userId)) {
+                    bot.authMessagesShown.delete(userId);
+                    recoveryResult.actionsExecuted.push('auth_messages_cleared');
                 }
                 
                 console.log(`[${userId}] Estados del bot limpiados`);
@@ -148,6 +154,13 @@ class EmergencyRecovery {
                     recoveryResult.actionsExecuted.push(`all_auth_timeouts_cleared_${timeoutResult.cleared}`);
                 }
                 
+                // NUEVO: Limpiar todos los mensajes de autenticación
+                if (bot.authMessagesShown) {
+                    const messageCount = bot.authMessagesShown.size;
+                    bot.authMessagesShown.clear();
+                    recoveryResult.actionsExecuted.push(`all_auth_messages_cleared_${messageCount}`);
+                }
+                
                 console.log(`Estados del bot limpiados completamente`);
             } else {
                 recoveryResult.errors.push('Bot instance no encontrada');
@@ -159,7 +172,7 @@ class EmergencyRecovery {
                 console.log(`Limpiando todos los estados del MainDialog...`);
                 
                 const cleanupResult = mainDialog.forceCleanup();
-                recoveryResult.actionsExecuted.push(`main_dialog_force_cleanup_${cleanupResult.activeAuthDialogsCleared}_${cleanupResult.processingUsersCleared}`);
+                recoveryResult.actionsExecuted.push(`main_dialog_force_cleanup_${cleanupResult.activeAuthDialogsCleared}_${cleanupResult.processingUsersCleared}_${cleanupResult.cancelledMessagesCleared || 0}`);
                 recoveryResult.affectedUsers += cleanupResult.activeAuthDialogsCleared;
                 
                 console.log(`Estados del MainDialog limpiados completamente`);
@@ -211,7 +224,8 @@ class EmergencyRecovery {
                     activeProcesses: bot.activeProcesses ? Array.from(bot.activeProcesses.keys()) : [],
                     activeDialogs: bot.activeDialogs ? Array.from(bot.activeDialogs) : [],
                     authenticatedUsers: bot.authenticatedUsers ? Array.from(bot.authenticatedUsers.keys()) : [],
-                    authTimeouts: bot.authTimeoutManager ? bot.authTimeoutManager.getActiveTimeouts() : null
+                    authTimeouts: bot.authTimeoutManager ? bot.authTimeoutManager.getActiveTimeouts() : null,
+                    authMessagesShown: bot.authMessagesShown ? Array.from(bot.authMessagesShown) : []
                 };
             } else {
                 report.botInstance = { exists: false };
@@ -267,6 +281,16 @@ class EmergencyRecovery {
                 });
             }
 
+            // NUEVO: Verificar mensajes de autenticación acumulados
+            const authMessagesCount = report.botInstance?.authMessagesShown?.length || 0;
+            if (authMessagesCount > 10) {
+                report.recommendations.push({
+                    priority: 'MEDIUM',
+                    issue: `${authMessagesCount} mensajes de autenticación acumulados`,
+                    solution: 'Limpiar cache de mensajes mostrados'
+                });
+            }
+
         } catch (error) {
             report.error = error.message;
         }
@@ -310,6 +334,7 @@ class EmergencyRecovery {
             formatted += `• Procesos activos: ${report.botInstance.activeProcesses.length}\n`;
             formatted += `• Diálogos activos: ${report.botInstance.activeDialogs.length}\n`;
             formatted += `• Usuarios autenticados: ${report.botInstance.authenticatedUsers.length}\n`;
+            formatted += `• Mensajes de auth mostrados: ${report.botInstance.authMessagesShown.length}\n`;
         }
         
         // Estado del MainDialog
@@ -317,6 +342,7 @@ class EmergencyRecovery {
         if (report.mainDialog?.exists) {
             formatted += `• Diálogos de auth activos: ${report.mainDialog.stats.activeAuthDialogs}\n`;
             formatted += `• Usuarios procesando: ${report.mainDialog.stats.processingUsers}\n`;
+            formatted += `• Mensajes de cancelación: ${report.mainDialog.stats.cancelledMessagesSent || 0}\n`;
         }
         
         // Usuarios bloqueados

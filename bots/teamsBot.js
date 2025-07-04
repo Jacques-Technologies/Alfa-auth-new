@@ -1,4 +1,4 @@
-// teamsBot.js - Corrección del flujo de autenticación
+// teamsBot.js - Corrección del flujo de autenticación - VERSIÓN SIN DUPLICADOS
 
 const { DialogBot } = require('./dialogBot');
 const axios = require('axios');
@@ -13,7 +13,7 @@ const { isTokenValid } = require('../utilities/http_utils');
 const { AuthTimeoutManager } = require('../utilities/auth_timeout');
 
 /**
- * TeamsBot class - Versión corregida para el flujo de autenticación
+ * TeamsBot class - Versión sin mensajes duplicados de autenticación
  */
 class TeamsBot extends DialogBot {
   constructor(conversationState, userState, dialog) {
@@ -37,6 +37,9 @@ class TeamsBot extends DialogBot {
 
     // Inicializar gestor de timeouts
     this.authTimeoutManager = new AuthTimeoutManager();
+    
+    // NUEVO: Control de mensajes de autenticación enviados
+    this.authMessagesShown = new Set();
   }
 
   /**
@@ -93,7 +96,7 @@ class TeamsBot extends DialogBot {
       const conversationId = context.activity.conversation.id;
       const text = (context.activity.text || '').trim().toLowerCase();
 
-      // CORRECCIÓN: Verificar si hay un proceso activo, pero con timeout
+      // Verificar si hay un proceso activo, pero con timeout
       if (this.activeProcesses.has(userId)) {
         const processStartTime = this.activeProcesses.get(userId);
         const timeElapsed = Date.now() - processStartTime;
@@ -109,7 +112,7 @@ class TeamsBot extends DialogBot {
         }
       }
 
-      // CORRECCIÓN: Verificar diálogos activos con timeout también
+      // Verificar diálogos activos con timeout también
       if (this.activeDialogs.has(`auth-${userId}`)) {
         console.log(`Diálogo de autenticación activo para usuario ${userId}`);
         return await next();
@@ -144,7 +147,7 @@ class TeamsBot extends DialogBot {
           }
         }
       } finally {
-        // CORRECCIÓN: Limpiar proceso activo después de completar
+        // Limpiar proceso activo después de completar
         this.activeProcesses.delete(userId);
       }
 
@@ -153,7 +156,7 @@ class TeamsBot extends DialogBot {
       await context.sendActivity('❌ Ocurrió un error inesperado. Intenta de nuevo.');
 
       const userId = context.activity.from.id;
-      // CORRECCIÓN: Limpiar todos los estados en caso de error
+      // Limpiar todos los estados en caso de error
       this.activeProcesses.delete(userId);
       this.activeDialogs.delete(`auth-${userId}`);
     }
@@ -223,17 +226,12 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Maneja solicitudes de login - VERSIÓN CORREGIDA
+   * Maneja solicitudes de login
    */
   async _handleLoginRequest(context, userId) {
     const dialogKey = `auth-${userId}`;
 
-    // CORRECCIÓN: Verificar si ya está autenticado ANTES de iniciar proceso
-
-
-
-
-
+    // Verificar si ya está autenticado
     const authData = await this.authState.get(context, {});
     if (authData[userId]?.authenticated === true) {
       await context.sendActivity('✅ **Ya estás autenticado**\n\n¡Puedes usar todas las funciones del bot!');
@@ -269,7 +267,7 @@ class TeamsBot extends DialogBot {
       console.error('Error en _handleLoginRequest:', error);
       await context.sendActivity('❌ Error al iniciar el proceso de autenticación.');
 
-      // CORRECCIÓN: Limpiar estados en caso de error
+      // Limpiar estados en caso de error
       this.activeDialogs.delete(dialogKey);
       this.authTimeoutManager.clearAuthTimeout(userId);
     }
@@ -291,9 +289,11 @@ class TeamsBot extends DialogBot {
       // Limpiar memoria y estados
       this.authenticatedUsers.delete(userId);
       this.authTimeoutManager.clearAuthTimeout(userId);
-      // CORRECCIÓN: Limpiar también los estados de proceso activo
       this.activeProcesses.delete(userId);
       this.activeDialogs.delete(`auth-${userId}`);
+      
+      // NUEVO: Limpiar mensajes de autenticación mostrados
+      this.authMessagesShown.delete(userId);
 
       await context.sendActivity('✅ **Sesión cerrada exitosamente**');
     } catch (error) {
@@ -373,15 +373,17 @@ class TeamsBot extends DialogBot {
     }
 
     this.authenticatedUsers.delete(userId);
-    // CORRECCIÓN: Limpiar también los estados de proceso activo
     this.activeProcesses.delete(userId);
     this.activeDialogs.delete(`auth-${userId}`);
+    
+    // NUEVO: Limpiar mensajes mostrados
+    this.authMessagesShown.delete(userId);
 
     await context.sendActivity('🔐 **Tu sesión ha expirado**\n\nEscribe `login` para autenticarte nuevamente.');
   }
 
   /**
-   * Maneja actividades invoke - VERSIÓN CORREGIDA
+   * Maneja actividades invoke - VERSIÓN CORREGIDA SIN DUPLICADOS
    */
   async onInvokeActivity(context) {
     try {
@@ -392,22 +394,11 @@ class TeamsBot extends DialogBot {
 
       console.log(`onInvokeActivity - Actividad: ${activityName}, Usuario: ${userId}`);
 
-      // CORRECCIÓN: No bloquear si hay proceso activo para actividades invoke
-      // Las actividades invoke son parte del flujo de autenticación
-
       if (activityName === 'signin/verifyState' || activityName === 'signin/tokenExchange') {
         console.log(`Procesando ${activityName} para usuario ${userId}`);
         
         try {
           await this.dialog.run(context, this.dialogState);
-
-
-
-
-
-
-
-
           return { status: 200 };
         } catch (error) {
           console.error(`Error en ${activityName}:`, error);
@@ -416,14 +407,24 @@ class TeamsBot extends DialogBot {
       } else if (activityName === 'signin/failure') {
         console.log(`Autenticación fallida para usuario ${userId}`);
         
-        // CORRECCIÓN: Limpiar todos los estados en caso de falla
+        // Limpiar todos los estados en caso de falla
         this.activeDialogs.delete(dialogKey);
         this.activeProcesses.delete(userId);
         this.authTimeoutManager.clearAuthTimeout(userId);
 
-        await context.sendActivity('❌ **Autenticación fallida**\n\n' +
-          'El proceso de autenticación no se completó correctamente.\n\n' +
-          'Escribe `login` para intentar nuevamente y asegúrate de completar todo el proceso.');
+        // CORREGIDO: Solo enviar mensaje si no se ha enviado ya
+        const messageKey = `auth_failed_${userId}`;
+        if (!this.authMessagesShown.has(messageKey)) {
+          this.authMessagesShown.add(messageKey);
+          
+          // Limpiar después de 30 segundos
+          setTimeout(() => {
+            this.authMessagesShown.delete(messageKey);
+          }, 30000);
+
+          await context.sendActivity('❌ **Proceso de autenticación interrumpido**\n\n' +
+            'El proceso no se completó correctamente. Escribe `login` para intentar nuevamente.');
+        }
 
         return { status: 200 };
       }
@@ -433,14 +434,23 @@ class TeamsBot extends DialogBot {
       console.error('Error en onInvokeActivity:', error);
 
       const userId = context.activity.from.id;
-      // CORRECCIÓN: Limpiar estados en caso de error
+      // Limpiar estados en caso de error
       this.activeDialogs.delete(`auth-${userId}`);
       this.activeProcesses.delete(userId);
       this.authTimeoutManager.clearAuthTimeout(userId);
 
       try {
-        await context.sendActivity('❌ **Error en el proceso de autenticación**\n\n' +
-          'Ocurrió un problema técnico. Intenta `login` nuevamente.');
+        const messageKey = `auth_error_${userId}`;
+        if (!this.authMessagesShown.has(messageKey)) {
+          this.authMessagesShown.add(messageKey);
+          
+          setTimeout(() => {
+            this.authMessagesShown.delete(messageKey);
+          }, 30000);
+
+          await context.sendActivity('❌ **Error en el proceso de autenticación**\n\n' +
+            'Ocurrió un problema técnico. Intenta `login` nuevamente.');
+        }
       } catch (sendError) {
         console.error('Error enviando mensaje de error:', sendError);
       }
@@ -529,7 +539,7 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Marca usuario como autenticado - VERSIÓN CORREGIDA
+   * Marca usuario como autenticado
    */
   async setUserAuthenticated(userId, conversationId, userData) {
     try {
@@ -552,11 +562,14 @@ class TeamsBot extends DialogBot {
       await this.authState.set(context, authData);
       await this.userState.saveChanges(context);
 
-      // CORRECCIÓN: Limpiar diálogos activos y timeouts después de autenticación exitosa
+      // Limpiar diálogos activos y timeouts después de autenticación exitosa
       const dialogKey = `auth-${userId}`;
       this.activeDialogs.delete(dialogKey);
       this.activeProcesses.delete(userId);
       this.authTimeoutManager.clearAuthTimeout(userId);
+      
+      // NUEVO: Limpiar mensajes de autenticación mostrados
+      this.authMessagesShown.delete(userId);
 
       console.log(`Usuario ${userId} autenticado exitosamente`);
 
@@ -592,6 +605,9 @@ class TeamsBot extends DialogBot {
       this.activeDialogs.delete(dialogKey);
       this.activeProcesses.delete(userId);
       this.authTimeoutManager.clearAuthTimeout(userId);
+      
+      // NUEVO: Limpiar mensajes mostrados
+      this.authMessagesShown.delete(userId);
 
       console.log(`Usuario ${userId} ha cerrado sesión`);
       return true;
@@ -623,12 +639,13 @@ class TeamsBot extends DialogBot {
       activeDialogs: this.activeDialogs.size,
       activeProcesses: this.activeProcesses.size,
       authTimeouts: this.authTimeoutManager.getActiveTimeouts(),
+      authMessagesShown: this.authMessagesShown.size,
       timestamp: new Date().toISOString()
     };
   }
 
   /**
-   * NUEVA FUNCIÓN: Método de limpieza para mantenimiento
+   * Método de limpieza para mantenimiento
    */
   cleanupStaleProcesses() {
     const now = Date.now();
@@ -644,6 +661,7 @@ class TeamsBot extends DialogBot {
     staleProcesses.forEach(userId => {
       this.activeProcesses.delete(userId);
       this.activeDialogs.delete(`auth-${userId}`);
+      this.authMessagesShown.delete(userId); // NUEVO: Limpiar también mensajes
     });
     
     if (staleProcesses.length > 0) {
