@@ -20,6 +20,9 @@ const {
 const { TeamsBot } = require('./bots/teamsBot');
 const { MainDialog } = require('./dialogs/mainDialog');
 
+const { DialogSet } = require('botbuilder-dialogs');
+const InvalidTokenMiddleware = require('./utilities/invalidTokenMiddleware');
+
 // Validar configuración crítica
 console.log('🔧 Validando configuración...');
 
@@ -88,12 +91,18 @@ adapter.onTurnError = async (context, error) => {
     }
 };
 
+
 // Definir almacenamiento de estado para el bot
 const memoryStorage = new MemoryStorage();
 
 // Crear estado de conversación y usuario con almacenamiento en memoria
 const conversationState = new ConversationState(memoryStorage);
 const userState = new UserState(memoryStorage);
+
+// Configurar conjunto de diálogos para middleware de token inválido
+const dialogs = new DialogSet(conversationState.createProperty('DialogState'));
+dialogs.add(new MainDialog());
+adapter.use(new InvalidTokenMiddleware(conversationState, userState, dialogs));
 
 // Crear el diálogo principal
 const dialog = new MainDialog();
