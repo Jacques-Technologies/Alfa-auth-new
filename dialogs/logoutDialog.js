@@ -2,39 +2,26 @@ const { ActivityTypes } = require('botbuilder');
 const { ComponentDialog } = require('botbuilder-dialogs');
 
 /**
- * LogoutDialog class extends ComponentDialog to handle user logout
+ * LogoutDialog class - FIX PARA ERRORES DE INSTANCIA
  */
 class LogoutDialog extends ComponentDialog {
-    /**
-     * Creates an instance of LogoutDialog.
-     * @param {string} id - The dialog ID.
-     * @param {string} connectionName - The connection name for the OAuth provider.
-     */
     constructor(id, connectionName) {
         super(id);
         this.connectionName = connectionName;
         
-        // Validar parámetros
         if (!connectionName) {
             console.warn('LogoutDialog: connectionName no proporcionado');
         }
         
-        // Tracking de interrupciones activas para evitar duplicados
         this.activeInterruptions = new Set();
     }
 
-    /**
-     * Called when the dialog is started and pushed onto the dialog stack.
-     * @param {DialogContext} innerDc - The dialog context for the current turn of conversation.
-     * @param {Object} options - Optional. Initial information to pass to the dialog.
-     */
     async onBeginDialog(innerDc, options) {
         try {
             const result = await this.interrupt(innerDc);
             if (result) {
                 return result;
             }
-
             return await super.onBeginDialog(innerDc, options);
         } catch (error) {
             console.error('LogoutDialog: Error en onBeginDialog:', error.message);
@@ -43,17 +30,12 @@ class LogoutDialog extends ComponentDialog {
         }
     }
 
-    /**
-     * Called when the dialog is continued, where it is the active dialog and the user replies with a new activity.
-     * @param {DialogContext} innerDc - The dialog context for the current turn of conversation.
-     */
     async onContinueDialog(innerDc) {
         try {
             const result = await this.interrupt(innerDc);
             if (result) {
                 return result;
             }
-
             return await super.onContinueDialog(innerDc);
         } catch (error) {
             console.error('LogoutDialog: Error en onContinueDialog:', error.message);
@@ -62,16 +44,11 @@ class LogoutDialog extends ComponentDialog {
         }
     }
 
-    /**
-     * Interrupts the dialog to handle logout and other commands.
-     * @param {DialogContext} innerDc - The dialog context for the current turn of conversation.
-     */
     async interrupt(innerDc) {
         if (innerDc.context.activity.type === ActivityTypes.Message) {
             const text = innerDc.context.activity.text?.toLowerCase()?.trim() || '';
             const userId = innerDc.context.activity.from.id;
             
-            // Evitar interrupciones duplicadas
             if (this.activeInterruptions.has(userId)) {
                 console.warn(`LogoutDialog: Interrupción ya en progreso para usuario ${userId}`);
                 return null;
@@ -80,7 +57,6 @@ class LogoutDialog extends ComponentDialog {
             this.activeInterruptions.add(userId);
             
             try {
-                // Comandos de logout
                 const logoutCommands = [
                     'logout', 'cerrar sesion', 'cerrar sesión', 'salir',
                     'desconectar', 'sign out', 'log out', 'exit'
@@ -95,38 +71,33 @@ class LogoutDialog extends ComponentDialog {
             }
         }
         
-        return null; // No interrumpir
+        return null;
     }
 
-    /**
-     * Handles the logout process with comprehensive cleanup
-     * @param {DialogContext} innerDc - The dialog context for the current turn of conversation.
-     * @private
-     */
     async handleLogout(innerDc) {
         const userId = innerDc.context.activity.from.id;
         let logoutSuccessful = false;
         const logoutSteps = [];
         
         try {
+            // CORREGIDO: Mejor manejo de instancias
+            console.log(`[${userId}] Iniciando proceso de logout`);
+            
             // Paso 1: Cerrar sesión OAuth
             try {
                 const userTokenClient = innerDc.context.turnState.get(innerDc.context.adapter.UserTokenClientKey);
                 
                 if (userTokenClient && this.connectionName) {
                     const { activity } = innerDc.context;
-                    
-                    // Cerrar sesión OAuth
                     await userTokenClient.signOutUser(
                         activity.from.id, 
                         this.connectionName, 
                         activity.channelId
                     );
-                    
                     logoutSteps.push('✅ Sesión OAuth cerrada');
                     logoutSuccessful = true;
                 } else {
-                    console.warn('LogoutDialog: No se encontró userTokenClient o connectionName');
+                    console.warn('LogoutDialog: userTokenClient o connectionName no disponible');
                     logoutSteps.push('⚠️ OAuth no disponible');
                 }
             } catch (oauthError) {
@@ -134,9 +105,14 @@ class LogoutDialog extends ComponentDialog {
                 logoutSteps.push('❌ Error cerrando OAuth');
             }
             
-            // Paso 2: Limpiar estado en el bot
+            // Paso 2: Limpiar estado en el bot - CORREGIDO
             try {
-                const bot = innerDc.context.turnState.get('bot');
+                // Intentar obtener bot desde diferentes lugares
+                let bot = innerDc.context.turnState.get('bot');
+                if (!bot) {
+                    bot = global.botInstance;
+                }
+                
                 if (bot && typeof bot.logoutUser === 'function') {
                     const botLogoutSuccess = bot.logoutUser(userId);
                     if (botLogoutSuccess) {
@@ -146,7 +122,7 @@ class LogoutDialog extends ComponentDialog {
                         logoutSteps.push('⚠️ Usuario no estaba en memoria del bot');
                     }
                 } else {
-                    console.warn('LogoutDialog: No se encontró instancia del bot');
+                    console.warn('LogoutDialog: No se encontró instancia del bot válida');
                     logoutSteps.push('⚠️ Instancia del bot no disponible');
                 }
             } catch (botError) {
@@ -154,19 +130,26 @@ class LogoutDialog extends ComponentDialog {
                 logoutSteps.push('❌ Error limpiando estado del bot');
             }
             
-            // Paso 3: Limpiar estado de usuario persistente
+            // Paso 3: Limpiar estado persistente - CORREGIDO
             try {
-                const userState = innerDc.context.turnState.get('UserState');
+                // Intentar obtener UserState desde diferentes lugares
+                let userState = innerDc.context.turnState.get('UserState');
+                if (!userState) {
+                    // Intentar desde el bot
+                    const bot = innerDc.context.turnState.get('bot') || global.botInstance;
+                    if (bot && bot.userState) {
+                        userState = bot.userState;
+                    }
+                }
+                
                 if (userState) {
                     const authState = userState.createProperty('AuthState');
                     const authData = await authState.get(innerDc.context, {});
                     
                     if (authData[userId]) {
-                        const userData = { ...authData[userId] };
                         delete authData[userId];
                         await authState.set(innerDc.context, authData);
                         await userState.saveChanges(innerDc.context);
-                        
                         logoutSteps.push('✅ Estado persistente limpiado');
                         logoutSuccessful = true;
                     } else {
@@ -181,7 +164,7 @@ class LogoutDialog extends ComponentDialog {
                 logoutSteps.push('❌ Error limpiando estado persistente');
             }
             
-            // Paso 4: Limpiar diálogos activos en MainDialog
+            // Paso 4: Limpiar diálogos activos
             try {
                 const mainDialog = global.mainDialogInstance;
                 if (mainDialog && typeof mainDialog.endUserDialog === 'function') {
@@ -224,13 +207,6 @@ class LogoutDialog extends ComponentDialog {
         }
     }
 
-    /**
-     * Handles dialog errors with user-friendly messages
-     * @param {DialogContext} innerDc - The dialog context for the current turn of conversation.
-     * @param {Error} error - The error that occurred
-     * @param {string} context - Context where the error occurred
-     * @private
-     */
     async handleDialogError(innerDc, error, context) {
         console.error(`LogoutDialog: Error en ${context}:`, error.message);
         
@@ -248,18 +224,16 @@ class LogoutDialog extends ComponentDialog {
         }
     }
 
-    /**
-     * Checks if user is authenticated
-     * @param {DialogContext} innerDc - The dialog context for the current turn of conversation.
-     * @returns {boolean} - Authentication status
-     * @private
-     */
     async isUserAuthenticated(innerDc) {
         try {
             const userId = innerDc.context.activity.from.id;
             
             // Verificar en el bot primero
-            const bot = innerDc.context.turnState.get('bot');
+            let bot = innerDc.context.turnState.get('bot');
+            if (!bot) {
+                bot = global.botInstance;
+            }
+            
             if (bot && typeof bot.isUserAuthenticated === 'function') {
                 const botAuthStatus = bot.isUserAuthenticated(userId);
                 if (botAuthStatus) {
@@ -267,27 +241,28 @@ class LogoutDialog extends ComponentDialog {
                 }
             }
             
-            // Verificar estado de autenticación persistente
-            const userState = innerDc.context.turnState.get('UserState');
+            // Verificar estado persistente
+            let userState = innerDc.context.turnState.get('UserState');
+            if (!userState && bot && bot.userState) {
+                userState = bot.userState;
+            }
+            
             if (userState) {
                 const authState = userState.createProperty('AuthState');
                 const authData = await authState.get(innerDc.context, {});
                 const userAuthData = authData[userId];
                 
                 if (userAuthData && userAuthData.authenticated === true) {
-                    // Verificar si el token no ha expirado
                     if (userAuthData.lastAuthenticated) {
                         const lastAuth = new Date(userAuthData.lastAuthenticated);
                         const now = new Date();
                         const hoursSinceAuth = (now - lastAuth) / (1000 * 60 * 60);
                         
-                        // Si han pasado más de 24 horas, considerar no autenticado
                         if (hoursSinceAuth > 24) {
                             console.warn(`LogoutDialog: Token expirado para usuario ${userId} (${hoursSinceAuth.toFixed(1)} horas)`);
                             return false;
                         }
                     }
-                    
                     return true;
                 }
             }
@@ -299,10 +274,6 @@ class LogoutDialog extends ComponentDialog {
         }
     }
 
-    /**
-     * Forces cleanup of active interruptions (maintenance)
-     * @returns {number} - Number of interruptions cleared
-     */
     clearActiveInterruptions() {
         const count = this.activeInterruptions.size;
         this.activeInterruptions.clear();
