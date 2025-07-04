@@ -1,4 +1,4 @@
-// teamsBot.js - FIX PARA DOBLE AUTENTICACIÓN
+// teamsBot.js - Corrección del flujo de autenticación - VERSIÓN SIN DUPLICADOS
 
 const { DialogBot } = require('./dialogBot');
 const axios = require('axios');
@@ -13,7 +13,7 @@ const { isTokenValid } = require('../utilities/http_utils');
 const { AuthTimeoutManager } = require('../utilities/auth_timeout');
 
 /**
- * TeamsBot class - VERSIÓN CON FIX PARA DOBLE AUTENTICACIÓN
+ * TeamsBot class - Versión sin mensajes duplicados de autenticación
  */
 class TeamsBot extends DialogBot {
   constructor(conversationState, userState, dialog) {
@@ -202,7 +202,7 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Maneja todos los mensajes entrantes - VERSIÓN CON FIX DE DOBLE AUTENTICACIÓN
+   * Maneja todos los mensajes entrantes - VERSIÓN CORREGIDA
    */
   async handleMessageWithAuth(context, next) {
     this._ensureBotInContext(context);
@@ -432,71 +432,6 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Marca usuario como autenticado - VERSIÓN MEJORADA
-   */
-  async setUserAuthenticated(userId, conversationId, userData) {
-    try {
-      const { email, name, token, context } = userData;
-
-      console.log(`\n=== ESTABLECIENDO AUTENTICACIÓN ===`);
-      console.log(`Usuario: ${userId}`);
-      console.log(`Email: ${email}`);
-      console.log(`Timestamp: ${new Date().toISOString()}`);
-      
-      // 1. Limpiar cache de verificación primero
-      this.authVerificationCache.delete(`auth_${userId}`);
-      
-      // 2. Almacenar en memoria
-      this.authenticatedUsers.set(userId, { email, name, token, context });
-      console.log(`[${userId}] ✅ Almacenado en memoria`);
-
-      // 3. Almacenar persistentemente
-      const authData = await this.authState.get(context, {});
-      authData[userId] = {
-        authenticated: true,
-        email,
-        name,
-        token,
-        lastAuthenticated: new Date().toISOString()
-      };
-      await this.authState.set(context, authData);
-      await this.userState.saveChanges(context);
-      console.log(`[${userId}] ✅ Almacenado persistentemente`);
-
-      // 4. Limpiar diálogos activos y timeouts después de autenticación exitosa
-      const dialogKey = `auth-${userId}`;
-      this.activeDialogs.delete(dialogKey);
-      this.activeProcesses.delete(userId);
-      this.authTimeoutManager.clearAuthTimeout(userId);
-      this.authMessagesShown.delete(userId);
-
-      console.log(`[${userId}] ✅ Estados limpiados post-autenticación`);
-
-      // 5. Crear registro de conversación
-      try {
-        await this.conversationService.createConversation(conversationId, userId);
-        console.log(`[${userId}] ✅ Conversación creada`);
-      } catch (error) {
-        console.warn(`[${userId}] Error creando conversación:`, error.message);
-      }
-
-      console.log(`[${userId}] 🎉 AUTENTICACIÓN COMPLETADA EXITOSAMENTE`);
-      return true;
-      
-    } catch (error) {
-      console.error(`[${userId}] ❌ Error en setUserAuthenticated:`, error);
-      return false;
-    }
-  }
-
-  /**
-   * CORREGIDO: Verifica si un usuario está autenticado (método simple para compatibilidad)
-   */
-  isUserAuthenticated(userId) {
-    return this.authenticatedUsers.has(userId);
-  }
-
-  /**
    * Maneja submit de tarjetas adaptativas
    */
   async _handleCardSubmit(context, submitData) {
@@ -580,7 +515,7 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Maneja actividades invoke - VERSIÓN CORREGIDA
+   * Maneja actividades invoke - VERSIÓN CORREGIDA SIN DUPLICADOS
    */
   async onInvokeActivity(context) {
     try {
@@ -613,10 +548,12 @@ class TeamsBot extends DialogBot {
         this.authTimeoutManager.clearAuthTimeout(userId);
         this.authVerificationCache.delete(`auth_${userId}`);
 
+        // CORREGIDO: Solo enviar mensaje si no se ha enviado ya
         const messageKey = `auth_failed_${userId}`;
         if (!this.authMessagesShown.has(messageKey)) {
           this.authMessagesShown.add(messageKey);
           
+          // Limpiar después de 30 segundos
           setTimeout(() => {
             this.authMessagesShown.delete(messageKey);
           }, 30000);
@@ -630,7 +567,7 @@ class TeamsBot extends DialogBot {
 
       return await super.onInvokeActivity(context);
     } catch (error) {
-      console.error(`Error en onInvokeActivity:`, error);
+      console.error('Error en onInvokeActivity:', error);
 
       const userId = context.activity.from.id;
       // Limpiar estados en caso de error
@@ -723,6 +660,71 @@ class TeamsBot extends DialogBot {
   }
 
   /**
+   * Marca usuario como autenticado - VERSIÓN MEJORADA
+   */
+  async setUserAuthenticated(userId, conversationId, userData) {
+    try {
+      const { email, name, token, context } = userData;
+
+      console.log(`\n=== ESTABLECIENDO AUTENTICACIÓN ===`);
+      console.log(`Usuario: ${userId}`);
+      console.log(`Email: ${email}`);
+      console.log(`Timestamp: ${new Date().toISOString()}`);
+      
+      // 1. Limpiar cache de verificación primero
+      this.authVerificationCache.delete(`auth_${userId}`);
+      
+      // 2. Almacenar en memoria
+      this.authenticatedUsers.set(userId, { email, name, token, context });
+      console.log(`[${userId}] ✅ Almacenado en memoria`);
+
+      // 3. Almacenar persistentemente
+      const authData = await this.authState.get(context, {});
+      authData[userId] = {
+        authenticated: true,
+        email,
+        name,
+        token,
+        lastAuthenticated: new Date().toISOString()
+      };
+      await this.authState.set(context, authData);
+      await this.userState.saveChanges(context);
+      console.log(`[${userId}] ✅ Almacenado persistentemente`);
+
+      // 4. Limpiar diálogos activos y timeouts después de autenticación exitosa
+      const dialogKey = `auth-${userId}`;
+      this.activeDialogs.delete(dialogKey);
+      this.activeProcesses.delete(userId);
+      this.authTimeoutManager.clearAuthTimeout(userId);
+      this.authMessagesShown.delete(userId);
+
+      console.log(`[${userId}] ✅ Estados limpiados post-autenticación`);
+
+      // 5. Crear registro de conversación
+      try {
+        await this.conversationService.createConversation(conversationId, userId);
+        console.log(`[${userId}] ✅ Conversación creada`);
+      } catch (error) {
+        console.warn(`[${userId}] Error creando conversación:`, error.message);
+      }
+
+      console.log(`[${userId}] 🎉 AUTENTICACIÓN COMPLETADA EXITOSAMENTE`);
+      return true;
+      
+    } catch (error) {
+      console.error(`[${userId}] ❌ Error en setUserAuthenticated:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Verifica si un usuario está autenticado
+   */
+  isUserAuthenticated(userId) {
+    return this.authenticatedUsers.has(userId);
+  }
+
+  /**
    * Cierra sesión de usuario
    */
   logoutUser(userId) {
@@ -775,7 +777,7 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Método de limpieza para mantenimiento - MEJORADO
+   * Método de limpieza para mantenimiento
    */
   cleanupStaleProcesses() {
     const now = Date.now();
