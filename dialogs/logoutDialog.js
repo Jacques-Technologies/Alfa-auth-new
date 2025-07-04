@@ -177,20 +177,7 @@ class LogoutDialog extends ComponentDialog {
                 console.error('LogoutDialog: Error limpiando diálogos activos:', dialogError.message);
                 logoutSteps.push('❌ Error limpiando diálogos');
             }
-            
-            // Enviar mensaje de confirmación
-            const statusEmoji = logoutSuccessful ? '✅' : '⚠️';
-            const statusText = logoutSuccessful ? 'Sesión cerrada exitosamente' : 'Logout parcial completado';
-            
-            const logoutMessage = `${statusEmoji} **${statusText}**\n\n` +
-                `**Pasos ejecutados:**\n${logoutSteps.join('\n')}\n\n` +
-                `💡 **Próximos pasos:**\n` +
-                `• Escribe \`login\` para iniciar sesión nuevamente\n` +
-                `• Escribe \`ayuda\` si necesitas asistencia\n\n` +
-                `🔒 Tus datos están seguros y la sesión ha sido cerrada correctamente.`;
-            
-            await innerDc.context.sendActivity(logoutMessage);
-            
+                        
             return await innerDc.cancelAllDialogs();
             
         } catch (error) {
