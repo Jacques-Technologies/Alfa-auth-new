@@ -345,10 +345,7 @@ class MainDialog extends LogoutDialog {
             try {
                 const finalAuthCheck = await bot.isUserAuthenticatedEnhanced(userId, stepContext.context);
                 console.log(`[${userId}] Verificación final de autenticación: ${finalAuthCheck}`);
-                
-                if (finalAuthCheck) {
-                    await stepContext.context.sendActivity('🎯 **¡Todo listo!**\n\nYa puedes enviar cualquier mensaje y el bot te ayudará.');
-                }
+
             } catch (finalCheckError) {
                 console.warn(`[${userId}] Error en verificación final:`, finalCheckError.message);
             }
