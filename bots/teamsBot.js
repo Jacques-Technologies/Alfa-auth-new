@@ -1,4 +1,4 @@
-// teamsBot.js - Corrección del flujo de autenticación - VERSIÓN SIN DUPLICADOS
+// teamsBot.js - FIX PARA DOBLE AUTENTICACIÓN
 
 const { DialogBot } = require('./dialogBot');
 const axios = require('axios');
@@ -13,7 +13,7 @@ const { isTokenValid } = require('../utilities/http_utils');
 const { AuthTimeoutManager } = require('../utilities/auth_timeout');
 
 /**
- * TeamsBot class - Versión sin mensajes duplicados de autenticación
+ * TeamsBot class - VERSIÓN CON FIX PARA DOBLE AUTENTICACIÓN
  */
 class TeamsBot extends DialogBot {
   constructor(conversationState, userState, dialog) {
@@ -38,8 +38,12 @@ class TeamsBot extends DialogBot {
     // Inicializar gestor de timeouts
     this.authTimeoutManager = new AuthTimeoutManager();
     
-    // NUEVO: Control de mensajes de autenticación enviados
+    // Control de mensajes de autenticación enviados
     this.authMessagesShown = new Set();
+    
+    // NUEVO: Cache de verificación de autenticación para evitar race conditions
+    this.authVerificationCache = new Map();
+    this.cacheTimeout = 5000; // 5 segundos
   }
 
   /**
@@ -74,6 +78,118 @@ class TeamsBot extends DialogBot {
   }
 
   /**
+   * NUEVO: Verificación mejorada de autenticación con cache
+   * @param {string} userId - ID del usuario
+   * @param {TurnContext} context - Contexto del turno
+   * @returns {boolean} - Si el usuario está autenticado
+   */
+  async isUserAuthenticatedEnhanced(userId, context) {
+    try {
+      // 1. Verificar cache primero para evitar verificaciones duplicadas
+      const cacheKey = `auth_${userId}`;
+      const cachedResult = this.authVerificationCache.get(cacheKey);
+      if (cachedResult && (Date.now() - cachedResult.timestamp) < this.cacheTimeout) {
+        console.log(`[${userId}] Usando resultado de cache: ${cachedResult.authenticated}`);
+        return cachedResult.authenticated;
+      }
+
+      // 2. Verificar en memoria (más rápido)
+      const memoryAuth = this.authenticatedUsers.has(userId);
+      console.log(`[${userId}] Autenticación en memoria: ${memoryAuth}`);
+
+      // 3. Verificar estado persistente
+      const authData = await this.authState.get(context, {});
+      const persistentAuth = authData[userId]?.authenticated === true;
+      console.log(`[${userId}] Autenticación persistente: ${persistentAuth}`);
+
+      // 4. Si hay inconsistencia, sincronizar
+      let finalAuth = false;
+      if (memoryAuth && persistentAuth) {
+        finalAuth = true;
+        console.log(`[${userId}] ✅ Autenticación consistente: verdadero`);
+      } else if (memoryAuth && !persistentAuth) {
+        // Sincronizar persistente con memoria
+        await this.syncPersistentFromMemory(userId, context);
+        finalAuth = true;
+        console.log(`[${userId}] 🔄 Sincronizado persistente desde memoria`);
+      } else if (!memoryAuth && persistentAuth) {
+        // Sincronizar memoria desde persistente
+        await this.syncMemoryFromPersistent(userId, context, authData[userId]);
+        finalAuth = true;
+        console.log(`[${userId}] 🔄 Sincronizado memoria desde persistente`);
+      } else {
+        finalAuth = false;
+        console.log(`[${userId}] ❌ No autenticado en ningún lugar`);
+      }
+
+      // 5. Guardar en cache
+      this.authVerificationCache.set(cacheKey, {
+        authenticated: finalAuth,
+        timestamp: Date.now()
+      });
+
+      // 6. Limpiar cache antiguo
+      setTimeout(() => {
+        this.authVerificationCache.delete(cacheKey);
+      }, this.cacheTimeout);
+
+      return finalAuth;
+
+    } catch (error) {
+      console.error(`[${userId}] Error en verificación de autenticación:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * NUEVO: Sincroniza estado persistente desde memoria
+   * @param {string} userId - ID del usuario
+   * @param {TurnContext} context - Contexto del turno
+   */
+  async syncPersistentFromMemory(userId, context) {
+    try {
+      const userInfo = this.authenticatedUsers.get(userId);
+      if (userInfo) {
+        const authData = await this.authState.get(context, {});
+        authData[userId] = {
+          authenticated: true,
+          email: userInfo.email,
+          name: userInfo.name,
+          token: userInfo.token,
+          lastAuthenticated: new Date().toISOString()
+        };
+        await this.authState.set(context, authData);
+        await this.userState.saveChanges(context);
+        console.log(`[${userId}] Estado persistente sincronizado desde memoria`);
+      }
+    } catch (error) {
+      console.error(`[${userId}] Error sincronizando persistente desde memoria:`, error);
+    }
+  }
+
+  /**
+   * NUEVO: Sincroniza memoria desde estado persistente
+   * @param {string} userId - ID del usuario
+   * @param {TurnContext} context - Contexto del turno
+   * @param {Object} authData - Datos de autenticación persistentes
+   */
+  async syncMemoryFromPersistent(userId, context, authData) {
+    try {
+      if (authData && authData.authenticated) {
+        this.authenticatedUsers.set(userId, {
+          email: authData.email,
+          name: authData.name,
+          token: authData.token,
+          context: context
+        });
+        console.log(`[${userId}] Memoria sincronizada desde estado persistente`);
+      }
+    } catch (error) {
+      console.error(`[${userId}] Error sincronizando memoria desde persistente:`, error);
+    }
+  }
+
+  /**
    * Maneja nuevos miembros
    */
   async handleMembersAdded(context, next) {
@@ -86,7 +202,7 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Maneja todos los mensajes entrantes - VERSIÓN CORREGIDA
+   * Maneja todos los mensajes entrantes - VERSIÓN CON FIX DE DOBLE AUTENTICACIÓN
    */
   async handleMessageWithAuth(context, next) {
     this._ensureBotInContext(context);
@@ -96,40 +212,48 @@ class TeamsBot extends DialogBot {
       const conversationId = context.activity.conversation.id;
       const text = (context.activity.text || '').trim().toLowerCase();
 
+      console.log(`\n=== MENSAJE ENTRANTE ===`);
+      console.log(`Usuario: ${userId}`);
+      console.log(`Mensaje: "${text}"`);
+      console.log(`Timestamp: ${new Date().toISOString()}`);
+
       // Verificar si hay un proceso activo, pero con timeout
       if (this.activeProcesses.has(userId)) {
         const processStartTime = this.activeProcesses.get(userId);
         const timeElapsed = Date.now() - processStartTime;
         
-        // Si el proceso lleva más de 30 segundos activo, limpiarlo
         if (timeElapsed > 30000) {
-          console.warn(`Limpiando proceso activo para usuario ${userId} (${timeElapsed}ms)`);
+          console.warn(`[${userId}] Limpiando proceso activo obsoleto (${timeElapsed}ms)`);
           this.activeProcesses.delete(userId);
           this.activeDialogs.delete(`auth-${userId}`);
         } else {
-          console.log(`Proceso activo para usuario ${userId}, ignorando mensaje`);
+          console.log(`[${userId}] Proceso activo, ignorando mensaje`);
           return await next();
         }
       }
 
       // Verificar diálogos activos con timeout también
       if (this.activeDialogs.has(`auth-${userId}`)) {
-        console.log(`Diálogo de autenticación activo para usuario ${userId}`);
+        console.log(`[${userId}] Diálogo de autenticación activo`);
         return await next();
       }
 
       this.activeProcesses.set(userId, Date.now());
 
       try {
-        // Recuperar estado de autenticación
-        const authData = await this.authState.get(context, {});
-        const isAuthenticated = authData[userId]?.authenticated === true;
+        // CORREGIDO: Usar verificación mejorada de autenticación
+        const isAuthenticated = await this.isUserAuthenticatedEnhanced(userId, context);
 
-        console.log(`Usuario ${userId} - Autenticado: ${isAuthenticated}, Mensaje: "${text}"`);
+        console.log(`[${userId}] ==> RESULTADO FINAL DE AUTENTICACIÓN: ${isAuthenticated}`);
 
         // Procesar comandos específicos
         if (this._isExplicitLoginCommand(text)) {
-          await this._handleLoginRequest(context, userId);
+          if (isAuthenticated) {
+            // FIX: Si ya está autenticado, no procesar login
+            await context.sendActivity('✅ **Ya estás autenticado**\n\n¡Puedes usar todas las funciones del bot! Escribe cualquier mensaje para empezar.');
+          } else {
+            await this._handleLoginRequest(context, userId);
+          }
         } else if (context.activity.value && Object.keys(context.activity.value).length > 0) {
           await this._handleCardSubmit(context, context.activity.value);
         } else if (this._isLogoutRequest(text)) {
@@ -137,18 +261,21 @@ class TeamsBot extends DialogBot {
         } else {
           // Mensajes generales - requieren autenticación
           if (isAuthenticated) {
+            console.log(`[${userId}] Procesando mensaje autenticado`);
             if (this._isAmbiguousVacationQuery(context.activity.text)) {
               await this._handleAmbiguousVacationQuery(context);
             } else {
               await this.processOpenAIMessage(context, context.activity.text, userId, conversationId);
             }
           } else {
-            await context.sendActivity('🔒 Necesitas iniciar sesión para usar el asistente. Escribe `login` para autenticarte.');
+            console.log(`[${userId}] Usuario no autenticado, solicitando login`);
+            await context.sendActivity('🔒 **Necesitas iniciar sesión para usar el asistente**\n\nEscribe `login` para autenticarte.');
           }
         }
       } finally {
         // Limpiar proceso activo después de completar
         this.activeProcesses.delete(userId);
+        console.log(`[${userId}] Proceso completado, limpiando estados`);
       }
 
     } catch (error) {
@@ -226,14 +353,14 @@ class TeamsBot extends DialogBot {
   }
 
   /**
-   * Maneja solicitudes de login
+   * Maneja solicitudes de login - VERSIÓN MEJORADA
    */
   async _handleLoginRequest(context, userId) {
     const dialogKey = `auth-${userId}`;
 
-    // Verificar si ya está autenticado
-    const authData = await this.authState.get(context, {});
-    if (authData[userId]?.authenticated === true) {
+    // CORREGIDO: Verificar con método mejorado
+    const isAuthenticated = await this.isUserAuthenticatedEnhanced(userId, context);
+    if (isAuthenticated) {
       await context.sendActivity('✅ **Ya estás autenticado**\n\n¡Puedes usar todas las funciones del bot!');
       return;
     }
@@ -260,11 +387,11 @@ class TeamsBot extends DialogBot {
         return;
       }
 
-      console.log(`Iniciando diálogo de autenticación para usuario ${userId}`);
+      console.log(`[${userId}] Iniciando diálogo de autenticación`);
       await this.dialog.run(context, this.dialogState);
 
     } catch (error) {
-      console.error('Error en _handleLoginRequest:', error);
+      console.error(`[${userId}] Error en _handleLoginRequest:`, error);
       await context.sendActivity('❌ Error al iniciar el proceso de autenticación.');
 
       // Limpiar estados en caso de error
@@ -278,6 +405,9 @@ class TeamsBot extends DialogBot {
    */
   async _handleLogoutRequest(context, userId) {
     try {
+      // Limpiar cache de verificación primero
+      this.authVerificationCache.delete(`auth_${userId}`);
+      
       // Limpiar estado de autenticación
       const authData = await this.authState.get(context, {});
       if (authData[userId]) {
@@ -291,15 +421,79 @@ class TeamsBot extends DialogBot {
       this.authTimeoutManager.clearAuthTimeout(userId);
       this.activeProcesses.delete(userId);
       this.activeDialogs.delete(`auth-${userId}`);
-      
-      // NUEVO: Limpiar mensajes de autenticación mostrados
       this.authMessagesShown.delete(userId);
 
       await context.sendActivity('✅ **Sesión cerrada exitosamente**');
+      console.log(`[${userId}] Logout completado`);
     } catch (error) {
-      console.error('Error en logout:', error);
+      console.error(`[${userId}] Error en logout:`, error);
       await context.sendActivity('❌ Error al cerrar sesión.');
     }
+  }
+
+  /**
+   * Marca usuario como autenticado - VERSIÓN MEJORADA
+   */
+  async setUserAuthenticated(userId, conversationId, userData) {
+    try {
+      const { email, name, token, context } = userData;
+
+      console.log(`\n=== ESTABLECIENDO AUTENTICACIÓN ===`);
+      console.log(`Usuario: ${userId}`);
+      console.log(`Email: ${email}`);
+      console.log(`Timestamp: ${new Date().toISOString()}`);
+      
+      // 1. Limpiar cache de verificación primero
+      this.authVerificationCache.delete(`auth_${userId}`);
+      
+      // 2. Almacenar en memoria
+      this.authenticatedUsers.set(userId, { email, name, token, context });
+      console.log(`[${userId}] ✅ Almacenado en memoria`);
+
+      // 3. Almacenar persistentemente
+      const authData = await this.authState.get(context, {});
+      authData[userId] = {
+        authenticated: true,
+        email,
+        name,
+        token,
+        lastAuthenticated: new Date().toISOString()
+      };
+      await this.authState.set(context, authData);
+      await this.userState.saveChanges(context);
+      console.log(`[${userId}] ✅ Almacenado persistentemente`);
+
+      // 4. Limpiar diálogos activos y timeouts después de autenticación exitosa
+      const dialogKey = `auth-${userId}`;
+      this.activeDialogs.delete(dialogKey);
+      this.activeProcesses.delete(userId);
+      this.authTimeoutManager.clearAuthTimeout(userId);
+      this.authMessagesShown.delete(userId);
+
+      console.log(`[${userId}] ✅ Estados limpiados post-autenticación`);
+
+      // 5. Crear registro de conversación
+      try {
+        await this.conversationService.createConversation(conversationId, userId);
+        console.log(`[${userId}] ✅ Conversación creada`);
+      } catch (error) {
+        console.warn(`[${userId}] Error creando conversación:`, error.message);
+      }
+
+      console.log(`[${userId}] 🎉 AUTENTICACIÓN COMPLETADA EXITOSAMENTE`);
+      return true;
+      
+    } catch (error) {
+      console.error(`[${userId}] ❌ Error en setUserAuthenticated:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * CORREGIDO: Verifica si un usuario está autenticado (método simple para compatibilidad)
+   */
+  isUserAuthenticated(userId) {
+    return this.authenticatedUsers.has(userId);
   }
 
   /**
@@ -355,7 +549,7 @@ class TeamsBot extends DialogBot {
 
       return null;
     } catch (error) {
-      console.error('Error obteniendo token OAuth:', error);
+      console.error(`[${userId}] Error obteniendo token OAuth:`, error);
       return null;
     }
   }
@@ -364,6 +558,11 @@ class TeamsBot extends DialogBot {
    * Maneja expiración de token
    */
   async _handleTokenExpiration(context, userId) {
+    console.log(`[${userId}] Manejando expiración de token`);
+    
+    // Limpiar cache de verificación
+    this.authVerificationCache.delete(`auth_${userId}`);
+    
     // Limpiar estado de autenticación
     const authData = await this.authState.get(context, {});
     if (authData[userId]) {
@@ -375,15 +574,13 @@ class TeamsBot extends DialogBot {
     this.authenticatedUsers.delete(userId);
     this.activeProcesses.delete(userId);
     this.activeDialogs.delete(`auth-${userId}`);
-    
-    // NUEVO: Limpiar mensajes mostrados
     this.authMessagesShown.delete(userId);
 
     await context.sendActivity('🔐 **Tu sesión ha expirado**\n\nEscribe `login` para autenticarte nuevamente.');
   }
 
   /**
-   * Maneja actividades invoke - VERSIÓN CORREGIDA SIN DUPLICADOS
+   * Maneja actividades invoke - VERSIÓN CORREGIDA
    */
   async onInvokeActivity(context) {
     try {
@@ -392,32 +589,34 @@ class TeamsBot extends DialogBot {
       const userId = context.activity.from.id;
       const dialogKey = `auth-${userId}`;
 
-      console.log(`onInvokeActivity - Actividad: ${activityName}, Usuario: ${userId}`);
+      console.log(`\n=== INVOKE ACTIVITY ===`);
+      console.log(`Actividad: ${activityName}`);
+      console.log(`Usuario: ${userId}`);
+      console.log(`Timestamp: ${new Date().toISOString()}`);
 
       if (activityName === 'signin/verifyState' || activityName === 'signin/tokenExchange') {
-        console.log(`Procesando ${activityName} para usuario ${userId}`);
+        console.log(`[${userId}] Procesando ${activityName}`);
         
         try {
           await this.dialog.run(context, this.dialogState);
           return { status: 200 };
         } catch (error) {
-          console.error(`Error en ${activityName}:`, error);
+          console.error(`[${userId}] Error en ${activityName}:`, error);
           return { status: 500 };
         }
       } else if (activityName === 'signin/failure') {
-        console.log(`Autenticación fallida para usuario ${userId}`);
+        console.log(`[${userId}] Autenticación fallida`);
         
         // Limpiar todos los estados en caso de falla
         this.activeDialogs.delete(dialogKey);
         this.activeProcesses.delete(userId);
         this.authTimeoutManager.clearAuthTimeout(userId);
+        this.authVerificationCache.delete(`auth_${userId}`);
 
-        // CORREGIDO: Solo enviar mensaje si no se ha enviado ya
         const messageKey = `auth_failed_${userId}`;
         if (!this.authMessagesShown.has(messageKey)) {
           this.authMessagesShown.add(messageKey);
           
-          // Limpiar después de 30 segundos
           setTimeout(() => {
             this.authMessagesShown.delete(messageKey);
           }, 30000);
@@ -431,29 +630,14 @@ class TeamsBot extends DialogBot {
 
       return await super.onInvokeActivity(context);
     } catch (error) {
-      console.error('Error en onInvokeActivity:', error);
+      console.error(`Error en onInvokeActivity:`, error);
 
       const userId = context.activity.from.id;
       // Limpiar estados en caso de error
       this.activeDialogs.delete(`auth-${userId}`);
       this.activeProcesses.delete(userId);
       this.authTimeoutManager.clearAuthTimeout(userId);
-
-      try {
-        const messageKey = `auth_error_${userId}`;
-        if (!this.authMessagesShown.has(messageKey)) {
-          this.authMessagesShown.add(messageKey);
-          
-          setTimeout(() => {
-            this.authMessagesShown.delete(messageKey);
-          }, 30000);
-
-          await context.sendActivity('❌ **Error en el proceso de autenticación**\n\n' +
-            'Ocurrió un problema técnico. Intenta `login` nuevamente.');
-        }
-      } catch (sendError) {
-        console.error('Error enviando mensaje de error:', sendError);
-      }
+      this.authVerificationCache.delete(`auth_${userId}`);
 
       return { status: 500 };
     }
@@ -477,7 +661,7 @@ class TeamsBot extends DialogBot {
       try {
         await this.conversationService.saveMessage(message, conversationId, userId);
       } catch (error) {
-        console.warn('Error guardando mensaje:', error.message);
+        console.warn(`[${userId}] Error guardando mensaje:`, error.message);
       }
 
       // Obtener historial de conversación
@@ -485,7 +669,7 @@ class TeamsBot extends DialogBot {
       try {
         history = await this.conversationService.getConversationHistory(conversationId);
       } catch (error) {
-        console.warn('Error obteniendo historial:', error.message);
+        console.warn(`[${userId}] Error obteniendo historial:`, error.message);
       }
 
       // Formatear historial para OpenAI
@@ -517,7 +701,7 @@ class TeamsBot extends DialogBot {
           await this.conversationService.saveMessage(botMessage, conversationId, 'bot');
           await this.conversationService.updateLastActivity(conversationId);
         } catch (error) {
-          console.warn('Error guardando respuesta:', error.message);
+          console.warn(`[${userId}] Error guardando respuesta:`, error.message);
         }
       } else {
         const responseContent = response.content || response;
@@ -526,72 +710,16 @@ class TeamsBot extends DialogBot {
           await this.conversationService.saveMessage(responseContent, conversationId, 'bot');
           await this.conversationService.updateLastActivity(conversationId);
         } catch (error) {
-          console.warn('Error guardando respuesta:', error.message);
+          console.warn(`[${userId}] Error guardando respuesta:`, error.message);
         }
 
         await context.sendActivity(responseContent);
       }
 
     } catch (error) {
-      console.error('Error en processOpenAIMessage:', error);
+      console.error(`[${userId}] Error en processOpenAIMessage:`, error);
       await context.sendActivity('❌ Error al procesar tu mensaje. Intenta más tarde.');
     }
-  }
-
-  /**
-   * Marca usuario como autenticado
-   */
-  async setUserAuthenticated(userId, conversationId, userData) {
-    try {
-      const { email, name, token, context } = userData;
-
-      console.log(`Marcando usuario ${userId} como autenticado - Email: ${email}`);
-      
-      // Almacenar en memoria
-      this.authenticatedUsers.set(userId, { email, name, token, context });
-
-      // Almacenar persistentemente
-      const authData = await this.authState.get(context, {});
-      authData[userId] = {
-        authenticated: true,
-        email,
-        name,
-        token,
-        lastAuthenticated: new Date().toISOString()
-      };
-      await this.authState.set(context, authData);
-      await this.userState.saveChanges(context);
-
-      // Limpiar diálogos activos y timeouts después de autenticación exitosa
-      const dialogKey = `auth-${userId}`;
-      this.activeDialogs.delete(dialogKey);
-      this.activeProcesses.delete(userId);
-      this.authTimeoutManager.clearAuthTimeout(userId);
-      
-      // NUEVO: Limpiar mensajes de autenticación mostrados
-      this.authMessagesShown.delete(userId);
-
-      console.log(`Usuario ${userId} autenticado exitosamente`);
-
-      // Crear registro de conversación
-      try {
-        await this.conversationService.createConversation(conversationId, userId);
-      } catch (error) {
-        console.warn('Error creando conversación:', error.message);
-      }
-
-      return true;
-    } catch (error) {
-      console.error('Error en setUserAuthenticated:', error);
-      return false;
-    }
-  }
-
-  /**
-   * Verifica si un usuario está autenticado
-   */
-  isUserAuthenticated(userId) {
-    return this.authenticatedUsers.has(userId);
   }
 
   /**
@@ -599,17 +727,18 @@ class TeamsBot extends DialogBot {
    */
   logoutUser(userId) {
     if (this.authenticatedUsers.has(userId)) {
+      // Limpiar cache de verificación
+      this.authVerificationCache.delete(`auth_${userId}`);
+      
       this.authenticatedUsers.delete(userId);
 
       const dialogKey = `auth-${userId}`;
       this.activeDialogs.delete(dialogKey);
       this.activeProcesses.delete(userId);
       this.authTimeoutManager.clearAuthTimeout(userId);
-      
-      // NUEVO: Limpiar mensajes mostrados
       this.authMessagesShown.delete(userId);
 
-      console.log(`Usuario ${userId} ha cerrado sesión`);
+      console.log(`[${userId}] Usuario ha cerrado sesión`);
       return true;
     }
     return false;
@@ -640,12 +769,13 @@ class TeamsBot extends DialogBot {
       activeProcesses: this.activeProcesses.size,
       authTimeouts: this.authTimeoutManager.getActiveTimeouts(),
       authMessagesShown: this.authMessagesShown.size,
+      authVerificationCache: this.authVerificationCache.size,
       timestamp: new Date().toISOString()
     };
   }
 
   /**
-   * Método de limpieza para mantenimiento
+   * Método de limpieza para mantenimiento - MEJORADO
    */
   cleanupStaleProcesses() {
     const now = Date.now();
@@ -661,7 +791,9 @@ class TeamsBot extends DialogBot {
     staleProcesses.forEach(userId => {
       this.activeProcesses.delete(userId);
       this.activeDialogs.delete(`auth-${userId}`);
-      this.authMessagesShown.delete(userId); // NUEVO: Limpiar también mensajes
+      this.authMessagesShown.delete(userId);
+      // NUEVO: Limpiar también cache de verificación
+      this.authVerificationCache.delete(`auth_${userId}`);
     });
     
     if (staleProcesses.length > 0) {
@@ -669,6 +801,20 @@ class TeamsBot extends DialogBot {
     }
     
     return staleProcesses.length;
+  }
+
+  /**
+   * NUEVO: Fuerza verificación de autenticación desde cero
+   * @param {string} userId - ID del usuario
+   * @param {TurnContext} context - Contexto del turno
+   * @returns {boolean} - Estado de autenticación verificado
+   */
+  async forceAuthVerification(userId, context) {
+    // Limpiar cache
+    this.authVerificationCache.delete(`auth_${userId}`);
+    
+    // Verificar desde cero
+    return await this.isUserAuthenticatedEnhanced(userId, context);
   }
 }
 
