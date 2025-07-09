@@ -1,4 +1,4 @@
-// mainDialog.js - FIX ESPECÍFICO PARA signin/verifyState
+// mainDialog.js - Versión simplificada y estable
 
 const { DialogSet, DialogTurnStatus, OAuthPrompt, WaterfallDialog } = require('botbuilder-dialogs');
 const { LogoutDialog } = require('./logoutDialog');
@@ -8,7 +8,7 @@ const MAIN_WATERFALL_DIALOG = 'MainWaterfallDialog';
 const OAUTH_PROMPT = 'OAuthPrompt';
 
 /**
- * MainDialog class - FIX PARA signin/verifyState
+ * MainDialog - Versión simplificada sin complejidad de tracking
  */
 class MainDialog extends LogoutDialog {
     constructor() {
@@ -16,14 +16,14 @@ class MainDialog extends LogoutDialog {
 
         const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
         if (!connectionName) {
-            console.error('MainDialog: ERROR - No se ha configurado connectionName');
-            throw new Error('Configuración OAuth faltante: connectionName es requerido');
+            console.error('MainDialog: ERROR - connectionName no configurado');
+            throw new Error('Configuración OAuth faltante');
         }
 
         this.addDialog(new OAuthPrompt(OAUTH_PROMPT, {
             connectionName: connectionName,
             title: 'Iniciar Sesión - Alfa Bot',
-            timeout: 300000,
+            timeout: 300000, // 5 minutos
             endOnInvalidMessage: true
         }));
 
@@ -35,188 +35,116 @@ class MainDialog extends LogoutDialog {
 
         this.initialDialogId = MAIN_WATERFALL_DIALOG;
 
-        // Control de procesos activos
-        this.activeAuthDialogs = new Set();
-        this.processingUsers = new Set();
-        this.cancelledMessagesSent = new Set();
+        // Control simple de diálogos activos
+        this.activeDialogs = new Set();
         
-        // NUEVO: Rastrear diálogos en progreso para signin/verifyState
-        this.dialogsInProgress = new Map(); // userId -> dialogContext
-        
+        // Registrar globalmente para acceso desde bot
         global.mainDialogInstance = this;
+
+        console.log('MainDialog inicializado correctamente');
     }
 
     /**
-     * Run method - FIX PARA EVITAR DIÁLOGOS DUPLICADOS EN signin/verifyState
+     * Método run simplificado
      */
     async run(context, accessor) {
         const userId = context.activity.from.id;
-        const dialogKey = `auth-dialog-${userId}`;
         const activityType = context.activity.type;
         const activityName = context.activity.name;
 
-        console.log(`\n=== MAIN DIALOG RUN ===`);
-        console.log(`Usuario: ${userId}`);
-        console.log(`Tipo de actividad: ${activityType}`);
-        console.log(`Nombre de actividad: ${activityName || 'N/A'}`);
-        console.log(`Timestamp: ${new Date().toISOString()}`);
-
-        // NUEVO: Si es signin/verifyState y ya hay un diálogo en progreso, continuar en lugar de crear nuevo
-        if (activityName === 'signin/verifyState' || activityName === 'signin/tokenExchange') {
-            console.log(`[${userId}] Detectado ${activityName} - Verificando diálogo existente`);
-            
-            const existingDialog = this.dialogsInProgress.get(userId);
-            if (existingDialog) {
-                console.log(`[${userId}] Continuando diálogo existente para ${activityName}`);
-                try {
-                    const results = await existingDialog.continueDialog();
-                    console.log(`[${userId}] Estado del diálogo después de ${activityName}: ${results.status}`);
-                    
-                    if (results.status === DialogTurnStatus.complete || results.status === DialogTurnStatus.cancelled) {
-                        this.dialogsInProgress.delete(userId);
-                        this.activeAuthDialogs.delete(dialogKey);
-                        console.log(`[${userId}] Diálogo completado/cancelado para ${activityName}`);
-                    }
-                    return;
-                } catch (continueError) {
-                    console.error(`[${userId}] Error continuando diálogo para ${activityName}:`, continueError);
-                    // Si falla, limpiar y continuar con nuevo diálogo
-                    this.dialogsInProgress.delete(userId);
-                    this.activeAuthDialogs.delete(dialogKey);
-                }
-            }
-        }
-        
-        // Verificar si ya se está procesando
-        if (this.processingUsers.has(userId)) {
-            console.log(`[${userId}] Usuario ya está siendo procesado`);
-            return;
-        }
-
-        // Verificación de autenticación mejorada - SOLO para activities de message
-        if (activityType === 'message') {
-            const bot = context.turnState.get('bot');
-            if (bot && typeof bot.isUserAuthenticatedEnhanced === 'function') {
-                try {
-                    const isAuthenticated = await bot.isUserAuthenticatedEnhanced(userId, context);
-                    if (isAuthenticated) {
-                        console.log(`[${userId}] Usuario ya está autenticado, saltando diálogo`);
-                        return;
-                    }
-                } catch (verificationError) {
-                    console.warn(`[${userId}] Error en verificación mejorada:`, verificationError.message);
-                }
-            }
-        }
-
-        // Evitar diálogos duplicados
-        if (this.activeAuthDialogs.has(dialogKey)) {
-            console.log(`[${userId}] Diálogo ya activo`);
-            return;
-        }
-
-        this.processingUsers.add(userId);
+        console.log(`MainDialog.run [${userId}] - ${activityType}:${activityName || 'N/A'}`);
 
         try {
+            // Verificar si ya hay autenticación para activities de message
+            if (activityType === 'message') {
+                const bot = context.turnState.get('bot');
+                if (bot && typeof bot.isUserAuthenticated === 'function') {
+                    const isAuthenticated = await bot.isUserAuthenticated(userId, context);
+                    if (isAuthenticated) {
+                        console.log(`[${userId}] Ya autenticado, saltando diálogo`);
+                        return;
+                    }
+                }
+            }
+
+            // Evitar diálogos duplicados para el mismo usuario
+            const dialogKey = `dialog-${userId}`;
+            if (this.activeDialogs.has(dialogKey)) {
+                console.log(`[${userId}] Diálogo ya activo`);
+                return;
+            }
+
             const dialogSet = new DialogSet(accessor);
             dialogSet.add(this);
 
             const dialogContext = await dialogSet.createContext(context);
-            
-            // NUEVO: Guardar contexto de diálogo para signin/verifyState
-            this.dialogsInProgress.set(userId, dialogContext);
-            
             const results = await dialogContext.continueDialog();
 
             console.log(`[${userId}] Estado del diálogo: ${results.status}`);
             
             if (results.status === DialogTurnStatus.empty) {
-                this.activeAuthDialogs.add(dialogKey);
-
-                try {
-                    console.log(`[${userId}] Iniciando diálogo`);
-                    await dialogContext.beginDialog(this.id);
-                } catch (beginError) {
-                    console.error(`[${userId}] Error iniciando diálogo:`, beginError);
-                    throw beginError;
-                } finally {
-                    // NO eliminar aquí - esperar a que termine el flujo completo
-                    console.log(`[${userId}] Diálogo iniciado`);
-                }
-            } else {
-                // Limpiar si el diálogo ha terminado
-                if (results.status === DialogTurnStatus.complete || results.status === DialogTurnStatus.cancelled) {
-                    this.activeAuthDialogs.delete(dialogKey);
-                    this.dialogsInProgress.delete(userId);
-                    console.log(`[${userId}] Diálogo completado/cancelado`);
-                }
+                this.activeDialogs.add(dialogKey);
+                console.log(`[${userId}] Iniciando nuevo diálogo`);
+                await dialogContext.beginDialog(this.id);
             }
+
         } catch (error) {
-            console.error(`[${userId}] Error en run():`, error);
+            console.error(`[${userId}] Error en MainDialog.run:`, error);
             // Limpiar estado de error
-            this.activeAuthDialogs.delete(dialogKey);
-            this.dialogsInProgress.delete(userId);
-            this.processingUsers.delete(userId);
+            this.activeDialogs.delete(`dialog-${userId}`);
             throw error;
-        } finally {
-            // Siempre limpiar el estado de procesamiento
-            this.processingUsers.delete(userId);
         }
     }
 
     /**
-     * Prompt Step - VERSIÓN MEJORADA PARA EVITAR DOBLES
+     * Paso 1: Mostrar prompt de autenticación
      */
     async promptStep(stepContext) {
         const userId = stepContext.context.activity.from.id;
         const activityType = stepContext.context.activity.type;
         const activityName = stepContext.context.activity.name;
 
-        console.log(`\n=== PROMPT STEP ===`);
-        console.log(`Usuario: ${userId}`);
-        console.log(`Tipo de actividad: ${activityType}`);
-        console.log(`Nombre de actividad: ${activityName || 'N/A'}`);
-        console.log(`Timestamp: ${new Date().toISOString()}`);
+        console.log(`[${userId}] PromptStep - ${activityType}:${activityName || 'N/A'}`);
         
-        // NUEVO: Si es invoke (signin/verifyState), NO mostrar nuevo prompt
-        if (activityType === 'invoke' && (activityName === 'signin/verifyState' || activityName === 'signin/tokenExchange')) {
-            console.log(`[${userId}] Es ${activityName}, saltando prompt - continuando a loginStep`);
+        // Para invokes (signin/verifyState), no mostrar nuevo prompt
+        if (activityType === 'invoke' && 
+            ['signin/verifyState', 'signin/tokenExchange'].includes(activityName)) {
+            console.log(`[${userId}] Es invoke ${activityName}, saltando prompt`);
             return await stepContext.next(null);
         }
 
-        // Verificación múltiple de autenticación solo para messages
+        // Verificación final de autenticación para messages
         if (activityType === 'message') {
             const bot = stepContext.context.turnState.get('bot');
-            
-            // Verificación con método mejorado
-            if (bot && typeof bot.isUserAuthenticatedEnhanced === 'function') {
-                try {
-                    const isAuthenticated = await bot.isUserAuthenticatedEnhanced(userId, stepContext.context);
-                    if (isAuthenticated) {
-                        console.log(`[${userId}] Usuario ya autenticado (verificación mejorada), saltando prompt`);
-                        return await stepContext.next(null);
-                    }
-                } catch (verificationError) {
-                    console.warn(`[${userId}] Error en verificación mejorada:`, verificationError.message);
+            if (bot && typeof bot.isUserAuthenticated === 'function') {
+                const isAuthenticated = await bot.isUserAuthenticated(userId, stepContext.context);
+                if (isAuthenticated) {
+                    console.log(`[${userId}] Usuario ya autenticado, saltando prompt`);
+                    return await stepContext.next(null);
                 }
             }
         }
 
         try {
-            console.log(`[${userId}] Iniciando OAuth prompt`);
+            console.log(`[${userId}] Mostrando OAuth prompt`);
             
-            await stepContext.context.sendActivity('🔐 **Autenticación Requerida**\n\nPara acceder a las funciones del bot, necesitas iniciar sesión con tu cuenta corporativa.\n\n🔄 Te redirigiremos al sistema de login...');
+            await stepContext.context.sendActivity(
+                '🔐 **Autenticación Requerida**\n\n' +
+                'Necesitas iniciar sesión con tu cuenta corporativa para continuar.\n\n' +
+                '🔄 Redirigiendo al sistema de login...'
+            );
             
             return await stepContext.beginDialog(OAUTH_PROMPT);
+            
         } catch (error) {
             console.error(`[${userId}] Error en promptStep:`, error);
-            await stepContext.context.sendActivity('❌ Error al iniciar el proceso de autenticación.');
+            await stepContext.context.sendActivity('❌ Error iniciando autenticación.');
             return await stepContext.endDialog();
         }
     }
 
     /**
-     * Login Step - VERSIÓN MEJORADA
+     * Paso 2: Procesar resultado de autenticación
      */
     async loginStep(stepContext) {
         const tokenResponse = stepContext.result;
@@ -225,45 +153,32 @@ class MainDialog extends LogoutDialog {
         const activityType = stepContext.context.activity.type;
         const activityName = stepContext.context.activity.name;
 
-        console.log(`\n=== LOGIN STEP ===`);
-        console.log(`Usuario: ${userId}`);
-        console.log(`Token presente: ${!!tokenResponse?.token}`);
-        console.log(`Tipo de actividad: ${activityType}`);
-        console.log(`Nombre de actividad: ${activityName || 'N/A'}`);
-        console.log(`Timestamp: ${new Date().toISOString()}`);
+        console.log(`[${userId}] LoginStep - Token: ${!!tokenResponse?.token}, Activity: ${activityType}:${activityName || 'N/A'}`);
         
         if (tokenResponse && tokenResponse.token) {
             try {
-                // Validar el token
-                const isTokenValid = await this.validateOAuthToken(tokenResponse.token);
-                if (!isTokenValid) {
-                    console.error(`[${userId}] Token OAuth inválido`);
-                    await stepContext.context.sendActivity('❌ **Token de autenticación inválido**\n\nEl token recibido no es válido. Por favor, intenta iniciar sesión nuevamente.');
+                // Validar token
+                const isValid = await this.validateToken(tokenResponse.token);
+                if (!isValid) {
+                    console.error(`[${userId}] Token inválido`);
+                    await stepContext.context.sendActivity(
+                        '❌ **Token inválido**\n\n' +
+                        'El token recibido no es válido. Intenta autenticarte nuevamente.'
+                    );
                     return await stepContext.endDialog();
                 }
 
-                // Obtener información del usuario
-                let userName = 'Usuario';
-                let userEmail = 'usuario@alfa.com';
-
-                try {
-                    const userInfo = await this.extractUserInfoFromToken(tokenResponse.token);
-                    userName = userInfo.name || userInfo.preferred_username || 'Usuario';
-                    userEmail = userInfo.email || userInfo.upn || userInfo.preferred_username || 'usuario@alfa.com';
-                    
-                    console.log(`[${userId}] Info del usuario - Nombre: ${userName}, Email: ${userEmail}`);
-                } catch (extractError) {
-                    console.warn(`[${userId}] No se pudo extraer información del token:`, extractError.message);
-                }
-
-                // Marcar usuario como autenticado
+                // Extraer información del usuario
+                const userInfo = await this.extractUserInfo(tokenResponse.token);
+                
+                // Marcar como autenticado en el bot
                 const bot = stepContext.context.turnState.get('bot');
                 if (bot && typeof bot.setUserAuthenticated === 'function') {
-                    console.log(`[${userId}] Marcando usuario como autenticado`);
+                    console.log(`[${userId}] Estableciendo autenticación en bot`);
                     
                     const authSuccess = await bot.setUserAuthenticated(userId, conversationId, {
-                        email: userEmail,
-                        name: userName,
+                        email: userInfo.email,
+                        name: userInfo.name,
                         token: tokenResponse.token,
                         context: stepContext.context
                     });
@@ -271,93 +186,71 @@ class MainDialog extends LogoutDialog {
                     if (authSuccess) {
                         console.log(`[${userId}] Autenticación exitosa`);
                         
-                        // Verificación post-auth
-                        if (typeof bot.forceAuthVerification === 'function') {
-                            const verificationResult = await bot.forceAuthVerification(userId, stepContext.context);
-                            console.log(`[${userId}] Verificación post-auth: ${verificationResult}`);
-                        }
-                        
-                        const welcomeMessage = `✅ **¡Autenticación exitosa!**\n\n🎉 Bienvenido, **${userName}**\n\n💬 Ya puedes usar todas las funciones del bot. ¡Pregúntame lo que necesites!`;
-                        await stepContext.context.sendActivity(welcomeMessage);
-                        
-                        // Pausa para sincronización
-                        await new Promise(resolve => setTimeout(resolve, 500));
+                        await stepContext.context.sendActivity(
+                            `✅ **¡Autenticación exitosa!**\n\n` +
+                            `🎉 Bienvenido, **${userInfo.name}**\n\n` +
+                            `💬 Ya puedes usar todas las funciones del bot.`
+                        );
                         
                         return await stepContext.next(tokenResponse);
                     } else {
-                        console.error(`[${userId}] Error al marcar usuario como autenticado`);
-                        await stepContext.context.sendActivity('❌ **Error al completar autenticación**\n\nPor favor, intenta autenticarte nuevamente.');
+                        console.error(`[${userId}] Error estableciendo autenticación`);
+                        await stepContext.context.sendActivity(
+                            '❌ **Error completando autenticación**\n\n' +
+                            'Intenta autenticarte nuevamente.'
+                        );
                         return await stepContext.endDialog();
                     }
                 } else {
-                    console.error('No se pudo obtener la instancia del bot');
+                    console.error(`[${userId}] Bot instance no encontrada`);
                     return await stepContext.endDialog();
                 }
+                
             } catch (error) {
-                console.error(`[${userId}] Error en autenticación:`, error);
-                await stepContext.context.sendActivity('❌ **Error inesperado en autenticación**\n\nOcurrió un error durante el proceso de autenticación. Intenta escribir `login` nuevamente.');
+                console.error(`[${userId}] Error en loginStep:`, error);
+                await stepContext.context.sendActivity(
+                    '❌ **Error durante autenticación**\n\n' +
+                    'Ocurrió un error inesperado. Intenta escribir `login` nuevamente.'
+                );
                 return await stepContext.endDialog();
             }
         } else {
-            // IMPORTANTE: No mostrar mensaje de cancelación si es signin/verifyState
+            // Para invokes sin token, continuar (puede llegar en siguiente invoke)
             if (activityType === 'invoke' && activityName === 'signin/verifyState') {
-                console.log(`[${userId}] signin/verifyState sin token - esperando token en próximo invoke`);
-                // No terminar el diálogo, continuar esperando
+                console.log(`[${userId}] signin/verifyState sin token - esperando...`);
                 return await stepContext.next(null);
             }
             
-            console.warn(`[${userId}] Usuario canceló la autenticación`);
-
-            const messageKey = `cancelled_${userId}`;
-            if (!this.cancelledMessagesSent.has(messageKey)) {
-                this.cancelledMessagesSent.add(messageKey);
-                
-                setTimeout(() => {
-                    this.cancelledMessagesSent.delete(messageKey);
-                }, 30000);
+            // Para messages, significa que se canceló
+            if (activityType === 'message') {
+                console.warn(`[${userId}] Autenticación cancelada por usuario`);
+                // No mostrar mensaje para evitar spam
             }
-
+            
             return await stepContext.endDialog();
         }
     }
 
     /**
-     * Final Step - VERSIÓN MEJORADA
+     * Paso 3: Finalizar diálogo
      */
     async finalStep(stepContext) {
         const userId = stepContext.context.activity.from.id;
-        const dialogKey = `auth-dialog-${userId}`;
+        const dialogKey = `dialog-${userId}`;
         
-        console.log(`\n=== FINAL STEP ===`);
-        console.log(`Usuario: ${userId}`);
-        console.log(`Resultado: ${!!stepContext.result}`);
-        console.log(`Timestamp: ${new Date().toISOString()}`);
+        console.log(`[${userId}] FinalStep - Resultado: ${!!stepContext.result}`);
         
-        // Limpiar estados al final
-        this.activeAuthDialogs.delete(dialogKey);
-        this.dialogsInProgress.delete(userId);
-        this.processingUsers.delete(userId);
-        console.log(`[${userId}] Estados limpiados en finalStep`);
-        
-        // Verificación final
-        const bot = stepContext.context.turnState.get('bot');
-        if (bot && typeof bot.isUserAuthenticatedEnhanced === 'function') {
-            try {
-                const finalAuthCheck = await bot.isUserAuthenticatedEnhanced(userId, stepContext.context);
-                console.log(`[${userId}] Verificación final de autenticación: ${finalAuthCheck}`);
-
-            } catch (finalCheckError) {
-                console.warn(`[${userId}] Error en verificación final:`, finalCheckError.message);
-            }
-        }
+        // Limpiar estado de diálogo activo
+        this.activeDialogs.delete(dialogKey);
+        console.log(`[${userId}] Diálogo finalizado`);
         
         return await stepContext.endDialog(stepContext.result);
     }
 
     /**
-     * Validates an OAuth token
+     * Valida un token OAuth
      */
-    async validateOAuthToken(token) {
+    async validateToken(token) {
         try {
             if (!token || typeof token !== 'string') {
                 return false;
@@ -370,132 +263,105 @@ class MainDialog extends LogoutDialog {
                     headers: {
                         'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`
                     },
-                    timeout: 50000
+                    timeout: 10000
                 }
             );
 
-            console.log(`Token válido - Status: ${response.status}`);
             return response.status === 200;
+            
         } catch (error) {
             if (error.response && error.response.status === 401) {
                 console.warn('Token inválido (401)');
                 return false;
             }
-            console.warn('Error validando token (asumiendo válido):', error.message);
-            return true;
+            console.warn('Error validando token, asumiendo válido:', error.message);
+            return true; // En caso de error de red, asumir válido
         }
     }
 
     /**
-     * Extracts user information from token
+     * Extrae información del usuario desde el token
      */
-    async extractUserInfoFromToken(token) {
+    async extractUserInfo(token) {
         try {
-            if (!token || typeof token !== 'string') {
-                throw new Error('Token inválido');
-            }
-
             const tokenParts = token.split('.');
             if (tokenParts.length !== 3) {
-                throw new Error('Formato de token JWT inválido');
+                throw new Error('Token JWT inválido');
             }
 
             const payload = JSON.parse(Buffer.from(tokenParts[1], 'base64').toString());
 
             return {
-                name: payload.name,
-                email: payload.email,
-                upn: payload.upn,
-                preferred_username: payload.preferred_username,
+                name: payload.name || payload.preferred_username || 'Usuario',
+                email: payload.email || payload.upn || payload.preferred_username || 'usuario@alfa.com',
                 sub: payload.sub,
                 oid: payload.oid
             };
+            
         } catch (error) {
-            console.warn('Error extrayendo información del token:', error.message);
-            throw error;
+            console.warn('Error extrayendo info del token:', error.message);
+            return {
+                name: 'Usuario',
+                email: 'usuario@alfa.com'
+            };
         }
     }
 
     /**
-     * Cleanup methods
+     * Termina diálogo para un usuario específico
      */
     endUserDialog(userId) {
-        const dialogKey = `auth-dialog-${userId}`;
-        const hadActiveDialog = this.activeAuthDialogs.has(dialogKey);
+        const dialogKey = `dialog-${userId}`;
+        const hadDialog = this.activeDialogs.has(dialogKey);
         
-        if (hadActiveDialog) {
-            this.activeAuthDialogs.delete(dialogKey);
-            this.processingUsers.delete(userId);
-            this.dialogsInProgress.delete(userId);
-            this.cancelledMessagesSent.delete(`cancelled_${userId}`);
-            console.log(`[${userId}] Diálogo terminado completamente`);
+        if (hadDialog) {
+            this.activeDialogs.delete(dialogKey);
+            console.log(`[${userId}] Diálogo terminado manualmente`);
         }
         
-        return hadActiveDialog;
+        return hadDialog;
     }
 
+    /**
+     * Obtiene estadísticas del diálogo
+     */
     getDialogStats() {
         return {
-            activeAuthDialogs: this.activeAuthDialogs.size,
-            processingUsers: this.processingUsers.size,
-            dialogsInProgress: this.dialogsInProgress.size,
-            cancelledMessagesSent: this.cancelledMessagesSent.size,
-            activeDialogs: Array.from(this.activeAuthDialogs),
-            processingUsersList: Array.from(this.processingUsers),
+            activeDialogs: this.activeDialogs.size,
+            activeDialogsList: Array.from(this.activeDialogs),
             timestamp: new Date().toISOString()
         };
     }
 
+    /**
+     * Limpieza forzada de todos los diálogos
+     */
     forceCleanup() {
-        const beforeAuthDialogs = this.activeAuthDialogs.size;
-        const beforeProcessing = this.processingUsers.size;
-        const beforeDialogsInProgress = this.dialogsInProgress.size;
-        const beforeMessages = this.cancelledMessagesSent.size;
+        const count = this.activeDialogs.size;
+        this.activeDialogs.clear();
         
-        this.activeAuthDialogs.clear();
-        this.processingUsers.clear();
-        this.dialogsInProgress.clear();
-        this.cancelledMessagesSent.clear();
-        
-        console.warn(`MainDialog.forceCleanup: Limpiados ${beforeAuthDialogs} diálogos activos, ${beforeProcessing} usuarios en procesamiento, ${beforeDialogsInProgress} diálogos en progreso y ${beforeMessages} mensajes de cancelación`);
+        console.warn(`MainDialog: Limpieza forzada - ${count} diálogos eliminados`);
         
         return {
-            activeAuthDialogsCleared: beforeAuthDialogs,
-            processingUsersCleared: beforeProcessing,
-            dialogsInProgressCleared: beforeDialogsInProgress,
-            cancelledMessagesCleared: beforeMessages,
+            dialogsCleared: count,
             timestamp: new Date().toISOString()
         };
     }
 
+    /**
+     * Limpieza de emergencia para un usuario específico
+     */
     emergencyUserCleanup(userId) {
-        const actionsExecuted = [];
+        const dialogKey = `dialog-${userId}`;
+        const hadDialog = this.activeDialogs.has(dialogKey);
         
-        const dialogKey = `auth-dialog-${userId}`;
-        if (this.activeAuthDialogs.has(dialogKey)) {
-            this.activeAuthDialogs.delete(dialogKey);
-            actionsExecuted.push('active_auth_dialog_removed');
-        }
-        
-        if (this.processingUsers.has(userId)) {
-            this.processingUsers.delete(userId);
-            actionsExecuted.push('processing_user_removed');
-        }
-        
-        if (this.dialogsInProgress.has(userId)) {
-            this.dialogsInProgress.delete(userId);
-            actionsExecuted.push('dialog_in_progress_removed');
-        }
-        
-        const messageKey = `cancelled_${userId}`;
-        if (this.cancelledMessagesSent.has(messageKey)) {
-            this.cancelledMessagesSent.delete(messageKey);
-            actionsExecuted.push('cancelled_message_cleared');
+        if (hadDialog) {
+            this.activeDialogs.delete(dialogKey);
         }
         
         return {
             userId,
-            actionsExecuted,
+            hadActiveDialog: hadDialog,
             timestamp: new Date().toISOString()
         };
     }

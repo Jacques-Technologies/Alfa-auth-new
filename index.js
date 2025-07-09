@@ -1,546 +1,387 @@
-// index.js corregido con mejor manejo de tarjetas adaptativas
+// index.js - Servidor principal optimizado para producción
 
-// Import required packages
-const path = require('path');
-const restify = require('restify');
-require('dotenv').config({ path: path.join(__dirname, '.env') });
-
-// Import required bot services.
-const {
-    CloudAdapter,
-    ConversationState,
-    MemoryStorage,
-    UserState,
-    ConfigurationBotFrameworkAuthentication,
-    CardFactory,
-    TeamsInfo
-} = require('botbuilder');
-
-// Importar componentes del bot
+const express = require('express');
+const { BotFrameworkAdapter, MemoryStorage, ConversationState, UserState } = require('botbuilder');
 const { TeamsBot } = require('./bots/teamsBot');
 const { MainDialog } = require('./dialogs/mainDialog');
+require('dotenv').config();
 
-const { DialogSet } = require('botbuilder-dialogs');
-const InvalidTokenMiddleware = require('./utilities/invalidTokenMiddleware');
-
-// Validar configuración crítica
-console.log('🔧 Validando configuración...');
-
-const requiredEnvVars = [
-    'MicrosoftAppId',
-    'MicrosoftAppPassword',
-    'OAUTH_CONNECTION_NAME'
-];
-
-const missingVars = requiredEnvVars.filter(varName => {
-    const value = process.env[varName] || process.env[varName.toLowerCase()];
-    return !value;
-});
-
-if (missingVars.length > 0) {
-    console.error('❌ ERROR: Faltan las siguientes variables de entorno:');
-    missingVars.forEach(varName => console.error(`   - ${varName}`));
-    console.error('Por favor, configura estas variables en el archivo .env');
-    process.exit(1);
-}
-
-// Configurar nombre de conexión OAuth
-const connectionName = process.env.OAUTH_CONNECTION_NAME || process.env.connectionName;
-console.log(`🔐 Conexión OAuth configurada: ${connectionName}`);
-
-// Configurar autenticación de Bot Framework
-const botFrameworkAuthentication = new ConfigurationBotFrameworkAuthentication({
-    MicrosoftAppId: process.env.MicrosoftAppId || process.env.MICROSOFT_APP_ID,
-    MicrosoftAppPassword: process.env.MicrosoftAppPassword || process.env.MICROSOFT_APP_PASSWORD,
-    MicrosoftAppTenantId: process.env.MicrosoftAppTenantId || process.env.MICROSOFT_APP_TENANT_ID,
-    MicrosoftAppType: process.env.MicrosoftAppType || process.env.MICROSOFT_APP_TYPE || 'MultiTenant',
-    OAuthConnectionName: connectionName
-});
-
-// Crear adaptador
-const adapter = new CloudAdapter(botFrameworkAuthentication);
-
-// Configurar manejo de errores mejorado
-adapter.onTurnError = async (context, error) => {
-    const errorMsg = error.message || 'Ocurrió un error inesperado.';
-    console.error(`\n❌ [onTurnError] Error no manejado: ${error.message}`);
-    console.error(`📍 Stack trace: ${error.stack}`);
-
-    try {
-        // Limpiar estado solo si es necesario
-        if (error.message && error.message.includes('authentication')) {
-            await conversationState.delete(context);
-            console.log('🧹 Estado de conversación limpiado debido a error de autenticación');
-        }
+/**
+ * Clase principal del servidor con manejo robusto de errores
+ */
+class BotServer {
+    constructor() {
+        this.app = express();
+        this.server = null;
+        this.bot = null;
+        this.adapter = null;
         
-        // Enviar mensaje amigable al usuario
-        let userMessage = '❌ Lo siento, ocurrió un error inesperado.';
+        // Configuración
+        this.port = process.env.PORT || 3978;
+        this.environment = process.env.NODE_ENV || 'development';
         
-        if (error.code === 'Unauthorized') {
-            userMessage = '🔒 Error de autenticación. Por favor, escribe `login` para iniciar sesión nuevamente.';
-        } else if (error.code === 'ServiceUnavailable') {
-            userMessage = '🔧 El servicio no está disponible temporalmente. Por favor, intenta en unos momentos.';
-        } else if (errorMsg.includes('timeout')) {
-            userMessage = '⏰ La operación tardó demasiado tiempo. Por favor, intenta nuevamente.';
-        }
+        // Estado de inicialización
+        this.initialized = false;
+        this.shutdownInProgress = false;
         
-        await context.sendActivity(userMessage);
-        
-    } catch (innerError) {
-        console.error(`❌ Error adicional en onTurnError: ${innerError.message}`);
+        // Métricas básicas
+        this.metrics = {
+            startTime: new Date(),
+            requestCount: 0,
+            errorCount: 0,
+            lastActivity: new Date()
+        };
     }
-};
 
-
-// Definir almacenamiento de estado para el bot
-const memoryStorage = new MemoryStorage();
-
-// Crear estado de conversación y usuario con almacenamiento en memoria
-const conversationState = new ConversationState(memoryStorage);
-const userState = new UserState(memoryStorage);
-
-// Configurar conjunto de diálogos para middleware de token inválido
-const dialogs = new DialogSet(conversationState.createProperty('DialogState'));
-dialogs.add(new MainDialog());
-adapter.use(new InvalidTokenMiddleware(conversationState, userState, dialogs));
-
-// Crear el diálogo principal
-const dialog = new MainDialog();
-
-// Crear el bot con el diálogo
-const bot = new TeamsBot(conversationState, userState, dialog);
-
-// Configurar puerto
-const port = process.env.PORT || process.env.port || 3978;
-
-// Crear servidor HTTP
-const server = restify.createServer({
-    name: 'Alfa Bot Server',
-    version: '1.0.0'
-});
-
-// Configurar middleware del servidor
-server.use(restify.plugins.bodyParser({
-    maxBodySize: 1000000, // 1MB
-    mapParams: true,
-    mapFiles: false,
-    overrideParams: false
-}));
-
-// Configuración CORS mejorada
-server.use(function corsHandler(req, res, next) {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    
-    // Manejar requests OPTIONS (preflight)
-    if (req.method === 'OPTIONS') {
-        res.send(200);
-        return;
-    }
-    
-    return next();
-});
-
-// CORREGIDO: Middleware mejorado para logging de requests
-server.use(function requestLogger(req, res, next) {
-    const start = Date.now();
-    const method = req.method;
-    const url = req.url;
-    
-    // Log de request entrante
-    console.log(`📡 [${new Date().toISOString()}] ${method} ${url} - Iniciando`);
-    
-    // Log adicional para requests POST (típicamente mensajes del bot)
-    if (method === 'POST' && url === '/api/messages') {
-        if (req.body) {
-            const activityType = req.body.type || 'unknown';
-            const activityName = req.body.name || 'N/A';
-            console.log(`📨 Actividad: ${activityType} (${activityName})`);
+    /**
+     * Inicializa el servidor completo
+     */
+    async initialize() {
+        try {
+            console.log('🚀 Inicializando Alfa Teams Bot...');
             
-            // Log especial para submits de tarjetas adaptativas
-            if (req.body.value && Object.keys(req.body.value).length > 0) {
-                console.log('🎯 Submit de tarjeta adaptativa detectado');
-                console.log('📋 Datos del submit:', JSON.stringify(req.body.value, null, 2));
-            }
+            // Validar configuración
+            this.validateEnvironment();
+            
+            // Configurar Express
+            this.setupExpress();
+            
+            // Inicializar Bot Framework
+            await this.initializeBotFramework();
+            
+            // Configurar rutas
+            this.setupRoutes();
+            
+            // Configurar manejo de errores
+            this.setupErrorHandling();
+            
+            // Iniciar servidor
+            await this.startServer();
+            
+            // Configurar shutdown graceful
+            this.setupGracefulShutdown();
+            
+            this.initialized = true;
+            console.log('✅ Alfa Teams Bot inicializado correctamente');
+            console.log(`🌐 Servidor ejecutándose en puerto ${this.port}`);
+            
+        } catch (error) {
+            console.error('❌ Error inicializando servidor:', error);
+            process.exit(1);
         }
     }
-    
-    // Interceptar el final del request para logging
-    const originalEnd = res.end;
-    res.end = function(chunk, encoding) {
-        const duration = Date.now() - start;
-        console.log(`📡 [${new Date().toISOString()}] ${method} ${url} - ${res.statusCode} (${duration}ms)`);
-        originalEnd.call(res, chunk, encoding);
-    };
-    
-    return next();
-});
 
-// Middleware para agregar la instancia del bot al estado del turno
-const addBotToTurnState = (req, res, next) => {
-    // Si no existe turnState, crearlo
-    if (!req.turnState) {
-        req.turnState = new Map();
-    }
-    // Agregar la instancia del bot al estado del turno
-    req.turnState.set('bot', bot);
-    return next();
-};
-
-// CORREGIDO: Ruta principal para mensajes de bot con mejor manejo de tarjetas adaptativas
-server.post('/api/messages', addBotToTurnState, async (req, res) => {
-    try {
-        // Logging detallado de actividades
-        const body = req.body;
-        if (body) {
-            const activityType = body.type || 'unknown';
-            const activityName = body.name || 'N/A';
-            
-            console.log(`📨 Actividad recibida - Tipo: ${activityType}, Nombre: ${activityName}`);
-            
-            // Log específico para diferentes tipos de actividad
-            if (activityType === 'message') {
-                const messageText = body.text ? `"${body.text.substring(0, 50)}${body.text.length > 50 ? '...' : ''}"` : 'sin texto';
-                console.log(`💬 Mensaje: ${messageText}`);
-                
-                // CORREGIDO: Mejor detección de submits de tarjetas adaptativas
-                if (body.value && typeof body.value === 'object' && Object.keys(body.value).length > 0) {
-                    console.log('🎯 Submit de tarjeta adaptativa confirmado');
-                    console.log('📋 Datos completos del submit:', JSON.stringify(body.value, null, 2));
-                    
-                    // Validar que tenemos los campos mínimos necesarios
-                    const { action, method, url } = body.value;
-                    if (action && method && url) {
-                        console.log(`✅ Submit válido para acción: ${action} (${method})`);
-                    } else {
-                        console.warn('⚠️ Submit con datos incompletos:', { action, method, url });
-                    }
-                }
-            } else if (activityType === 'invoke') {
-                console.log(`🔧 Invoke: "${activityName}"`);
-            } else if (activityType === 'event') {
-                console.log(`📅 Evento: "${activityName}"`);
-            }
+    /**
+     * Valida variables de entorno requeridas
+     */
+    validateEnvironment() {
+        const required = [
+            'MicrosoftAppId',
+            'MicrosoftAppPassword', 
+            'connectionName'
+        ];
+        
+        const missing = required.filter(env => !process.env[env]);
+        
+        if (missing.length > 0) {
+            throw new Error(`Variables de entorno faltantes: ${missing.join(', ')}`);
         }
         
-        // Procesar la solicitud con el adaptador
-        await adapter.process(req, res, async (context) => {
-            try {
-                // CORREGIDO: Asegurar que el contexto tenga toda la información necesaria
-                console.log('🔄 Procesando con adaptador...');
-                console.log('📊 Contexto - Actividad tipo:', context.activity.type);
-                console.log('📊 Contexto - Canal:', context.activity.channelId);
-                
-                // Ejecutar la lógica del bot
-                await bot.run(context);
-                
-                console.log('✅ Procesamiento completado exitosamente');
-            } catch (botError) {
-                console.error('❌ Error en bot.run():', botError.message);
-                console.error('📍 Stack trace:', botError.stack);
-                throw botError; // Re-lanzar para que lo maneje el adaptador
-            }
+        console.log('✅ Variables de entorno validadas');
+    }
+
+    /**
+     * Configura Express con middleware básico
+     */
+    setupExpress() {
+        // Middleware básico
+        this.app.use(express.json({ limit: '10mb' }));
+        this.app.use(express.urlencoded({ extended: true }));
+        
+        // Headers de seguridad básicos
+        this.app.use((req, res, next) => {
+            res.header('X-Content-Type-Options', 'nosniff');
+            res.header('X-Frame-Options', 'DENY');
+            res.header('X-XSS-Protection', '1; mode=block');
+            next();
         });
         
-    } catch (error) {
-        console.error('❌ Error crítico al procesar mensaje:', error.message);
-        console.error('📍 Stack trace completo:', error.stack);
+        // Middleware de métricas
+        this.app.use((req, res, next) => {
+            this.metrics.requestCount++;
+            this.metrics.lastActivity = new Date();
+            next();
+        });
         
-        // Enviar respuesta de error si aún no se ha enviado
-        if (!res.headersSent) {
-            res.status(500).json({
-                error: 'Error interno del servidor',
-                message: 'No se pudo procesar la solicitud',
+        console.log('✅ Express configurado');
+    }
+
+    /**
+     * Inicializa Bot Framework y componentes
+     */
+    async initializeBotFramework() {
+        try {
+            // Crear adapter
+            this.adapter = new BotFrameworkAdapter({
+                appId: process.env.MicrosoftAppId,
+                appPassword: process.env.MicrosoftAppPassword
+            });
+
+            // Configurar manejo de errores del adapter
+            this.adapter.onTurnError = async (context, error) => {
+                console.error('Bot Framework Error:', error);
+                this.metrics.errorCount++;
+                
+                try {
+                    await context.sendActivity('❌ Error interno del bot. Intenta nuevamente.');
+                } catch (sendError) {
+                    console.error('Error enviando mensaje de error:', sendError);
+                }
+            };
+
+            // Crear storage y estados
+            const memoryStorage = new MemoryStorage();
+            const conversationState = new ConversationState(memoryStorage);
+            const userState = new UserState(memoryStorage);
+
+            // Crear diálogo principal
+            const dialog = new MainDialog();
+
+            // Crear bot
+            this.bot = new TeamsBot(conversationState, userState, dialog);
+            
+            console.log('✅ Bot Framework inicializado');
+            
+        } catch (error) {
+            throw new Error(`Error inicializando Bot Framework: ${error.message}`);
+        }
+    }
+
+    /**
+     * Configura rutas de la aplicación
+     */
+    setupRoutes() {
+        // Ruta principal del bot
+        this.app.post('/api/messages', async (req, res) => {
+            try {
+                await this.adapter.processActivity(req, res, async (context) => {
+                    await this.bot.run(context);
+                });
+            } catch (error) {
+                console.error('Error procesando actividad:', error);
+                this.metrics.errorCount++;
+                
+                if (!res.headersSent) {
+                    res.status(500).json({ 
+                        error: 'Error interno',
+                        timestamp: new Date().toISOString()
+                    });
+                }
+            }
+        });
+
+        // Health check
+        this.app.get('/health', (req, res) => {
+            const health = {
+                status: this.initialized ? 'healthy' : 'initializing',
+                timestamp: new Date().toISOString(),
+                uptime: Date.now() - this.metrics.startTime.getTime(),
+                environment: this.environment,
+                metrics: {
+                    requests: this.metrics.requestCount,
+                    errors: this.metrics.errorCount,
+                    lastActivity: this.metrics.lastActivity
+                }
+            };
+            
+            res.json(health);
+        });
+
+        // Información del bot
+        this.app.get('/info', (req, res) => {
+            const info = {
+                name: 'Alfa Teams Bot',
+                version: '2.0.0',
+                environment: this.environment,
+                startTime: this.metrics.startTime,
+                botStats: this.bot ? this.bot.getStats() : null
+            };
+            
+            res.json(info);
+        });
+
+        // Métricas detalladas
+        this.app.get('/metrics', (req, res) => {
+            const metrics = {
+                ...this.metrics,
+                uptime: Date.now() - this.metrics.startTime.getTime(),
+                botStats: this.bot ? this.bot.getStats() : null,
+                memoryUsage: process.memoryUsage(),
+                cpuUsage: process.cpuUsage()
+            };
+            
+            res.json(metrics);
+        });
+
+        // Ruta raíz
+        this.app.get('/', (req, res) => {
+            res.json({
+                message: 'Alfa Teams Bot está ejecutándose',
+                timestamp: new Date().toISOString(),
+                health: '/health',
+                info: '/info',
+                metrics: '/metrics'
+            });
+        });
+
+        console.log('✅ Rutas configuradas');
+    }
+
+    /**
+     * Configura manejo centralizado de errores
+     */
+    setupErrorHandling() {
+        // Manejo de errores de Express
+        this.app.use((error, req, res, next) => {
+            console.error('Express Error:', error);
+            this.metrics.errorCount++;
+            
+            if (!res.headersSent) {
+                res.status(500).json({
+                    error: 'Error interno del servidor',
+                    timestamp: new Date().toISOString()
+                });
+            }
+        });
+
+        // Manejo de rutas no encontradas
+        this.app.use((req, res) => {
+            res.status(404).json({
+                error: 'Ruta no encontrada',
+                path: req.path,
                 timestamp: new Date().toISOString()
             });
+        });
+
+        // Manejo de errores no capturados
+        process.on('uncaughtException', (error) => {
+            console.error('Uncaught Exception:', error);
+            this.metrics.errorCount++;
+            
+            if (!this.shutdownInProgress) {
+                this.gracefulShutdown('uncaughtException');
+            }
+        });
+
+        process.on('unhandledRejection', (reason, promise) => {
+            console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+            this.metrics.errorCount++;
+        });
+
+        console.log('✅ Manejo de errores configurado');
+    }
+
+    /**
+     * Inicia el servidor HTTP
+     */
+    async startServer() {
+        return new Promise((resolve, reject) => {
+            this.server = this.app.listen(this.port, (error) => {
+                if (error) {
+                    reject(error);
+                } else {
+                    console.log(`✅ Servidor HTTP iniciado en puerto ${this.port}`);
+                    resolve();
+                }
+            });
+        });
+    }
+
+    /**
+     * Configura shutdown graceful
+     */
+    setupGracefulShutdown() {
+        const signals = ['SIGTERM', 'SIGINT'];
+        
+        signals.forEach(signal => {
+            process.on(signal, () => {
+                console.log(`Señal ${signal} recibida`);
+                this.gracefulShutdown(signal);
+            });
+        });
+    }
+
+    /**
+     * Ejecuta shutdown graceful
+     */
+    async gracefulShutdown(reason) {
+        if (this.shutdownInProgress) {
+            console.log('Shutdown ya en progreso, forzando salida...');
+            process.exit(1);
+        }
+        
+        this.shutdownInProgress = true;
+        console.log(`🔄 Iniciando shutdown graceful (razón: ${reason})`);
+        
+        try {
+            // Cerrar servidor HTTP
+            if (this.server) {
+                await new Promise((resolve) => {
+                    this.server.close(() => {
+                        console.log('✅ Servidor HTTP cerrado');
+                        resolve();
+                    });
+                });
+            }
+            
+            // Limpiar recursos del bot
+            if (this.bot && typeof this.bot.cleanup === 'function') {
+                await this.bot.cleanup();
+                console.log('✅ Recursos del bot limpiados');
+            }
+            
+            // Limpiar recursos de CosmosDB si existen
+            const cosmosConfig = require('./config/cosmosConfigs');
+            if (cosmosConfig && typeof cosmosConfig.cleanup === 'function') {
+                await cosmosConfig.cleanup();
+                console.log('✅ Recursos de CosmosDB limpiados');
+            }
+            
+            console.log('✅ Shutdown graceful completado');
+            process.exit(0);
+            
+        } catch (error) {
+            console.error('❌ Error durante shutdown graceful:', error);
+            process.exit(1);
         }
     }
-});
 
-// Rutas adicionales
-
-// Servir archivos estáticos
-server.get('/public/*', restify.plugins.serveStatic({
-    directory: path.join(path.resolve(), 'public'),
-    appendRequestPath: false,
-    default: 'index.html'
-}));
-
-// CORREGIDO: Ruta para manejar callback de OAuth con mejor HTML
-server.get('/oauthcallback', (req, res, next) => {
-    console.log('🔐 Recibida solicitud a /oauthcallback');
-    console.log('🔐 Query params:', req.query);
-    
-    const htmlContent = `
-    <!DOCTYPE html>
-    <html>
-        <head>
-            <title>Autenticación Completada - Alfa Bot</title>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-                body { 
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    height: 100vh;
-                    margin: 0;
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    color: white;
-                }
-                .container { 
-                    text-align: center; 
-                    padding: 2rem;
-                    background: rgba(255, 255, 255, 0.1);
-                    border-radius: 15px;
-                    backdrop-filter: blur(10px);
-                    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
-                    border: 1px solid rgba(255, 255, 255, 0.18);
-                    max-width: 400px;
-                }
-                .checkmark { 
-                    font-size: 4rem; 
-                    color: #4CAF50; 
-                    margin-bottom: 1rem;
-                    animation: pulse 2s infinite;
-                }
-                @keyframes pulse {
-                    0% { transform: scale(1); }
-                    50% { transform: scale(1.1); }
-                    100% { transform: scale(1); }
-                }
-                h1 { 
-                    margin: 1rem 0; 
-                    font-size: 1.5rem;
-                }
-                p { 
-                    margin: 0.8rem 0; 
-                    opacity: 0.9; 
-                    line-height: 1.4;
-                }
-                .countdown {
-                    font-weight: bold;
-                    color: #4CAF50;
-                }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="checkmark">✅</div>
-                <h1>¡Autenticación Completada!</h1>
-                <p>Ya puedes cerrar esta ventana y regresar a Microsoft Teams o Web Chat.</p>
-                <p>El bot ya está listo para ayudarte.</p>
-                <p class="countdown">Esta ventana se cerrará en <span id="timer">5</span> segundos...</p>
-            </div>
-            <script>
-                let countdown = 5;
-                const timer = document.getElementById('timer');
-                
-                const interval = setInterval(function() {
-                    countdown--;
-                    timer.textContent = countdown;
-                    
-                    if (countdown <= 0) {
-                        clearInterval(interval);
-                        try {
-                            window.close();
-                        } catch(e) {
-                            console.log('No se pudo cerrar la ventana automáticamente');
-                            document.querySelector('.countdown').innerHTML = 'Puedes cerrar esta ventana manualmente.';
-                        }
-                    }
-                }, 1000);
-            </script>
-        </body>
-    </html>`;
-    
-    res.writeHead(200, {
-        'Content-Length': Buffer.byteLength(htmlContent),
-        'Content-Type': 'text/html; charset=utf-8'
-    });
-    res.write(htmlContent);
-    res.end();
-    
-    return next();
-});
-
-// CORREGIDO: Ruta de salud del servicio con más información
-server.get('/health', (req, res, next) => {
-    const healthStatus = {
-        status: 'healthy',
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        version: '1.0.0',
-        services: {
-            bot: !!bot,
-            openai: !!process.env.OPENAI_API_KEY,
-            oauth: !!connectionName,
-            cosmosdb: !!process.env.COSMOSDB_ENDPOINT,
-            azure_search: !!process.env.SERVICE_ENDPOINT,
-            bubble_api: !!process.env.TOKEN_BUBBLE,
-            snow_api: !!process.env.TOKEN_API
-        },
-        memory: {
-            used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-            total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024)
-        },
-        process: {
-            pid: process.pid,
-            platform: process.platform,
-            nodeVersion: process.version
-        }
-    };
-    
-    res.json(healthStatus);
-    return next();
-});
-
-// CORREGIDO: Ruta de información del bot más detallada
-server.get('/info', (req, res, next) => {
-    const botInfo = {
-        name: 'Alfa Bot',
-        version: '1.0.0',
-        description: 'Bot inteligente para empleados de Alfa Corporation',
-        features: [
-            'Asistente de OpenAI con herramientas',
-            'Acciones de API SIRH dinámicas',
-            'Autenticación OAuth segura',
-            'Búsqueda en documentos (Azure Search)',
-            'Integración con ServiceNow',
-            'Consulta de menú del comedor',
-            'Directorio de empleados',
-            'Compatible con Teams y Web Chat'
-        ],
-        endpoints: {
-            messages: '/api/messages',
-            health: '/health',
-            oauth: '/oauthcallback',
-            info: '/info'
-        },
-        supportedChannels: [
-            'Microsoft Teams',
-            'Web Chat',
-            'Bot Framework Emulator'
-        ],
-        apis: {
-            sirh: process.env.SIRH_API_URL || 'https://botapiqas-alfacorp.msappproxy.net',
-            openai: !!process.env.OPENAI_API_KEY,
-            azure_search: !!process.env.SERVICE_ENDPOINT,
-            bubble: !!process.env.TOKEN_BUBBLE,
-            servicenow: !!process.env.TOKEN_API
-        }
-    };
-    
-    res.json(botInfo);
-    return next();
-});
-
-// NUEVO: Ruta de debug para desarrolladores
-server.get('/debug', (req, res, next) => {
-    if (process.env.NODE_ENV === 'production') {
-        res.status(403).json({ error: 'Debug endpoint not available in production' });
-        return next();
+    /**
+     * Obtiene estado del servidor
+     */
+    getServerStatus() {
+        return {
+            initialized: this.initialized,
+            shutdownInProgress: this.shutdownInProgress,
+            port: this.port,
+            environment: this.environment,
+            metrics: this.metrics
+        };
     }
-    
-    const debugInfo = {
-        environment: process.env.NODE_ENV || 'development',
-        botInstance: !!bot,
-        dialogInstance: !!dialog,
-        envVars: {
-            microsoftAppId: !!process.env.MicrosoftAppId,
-            microsoftAppPassword: !!process.env.MicrosoftAppPassword,
-            oauthConnection: !!connectionName,
-            openaiApiKey: !!process.env.OPENAI_API_KEY,
-            cosmosdbEndpoint: !!process.env.COSMOSDB_ENDPOINT,
-            azureSearchEndpoint: !!process.env.SERVICE_ENDPOINT
-        },
-        memory: process.memoryUsage(),
-        uptime: process.uptime(),
-        versions: process.versions
-    };
-    
-    res.json(debugInfo);
-    return next();
-});
+}
 
-// Iniciar servidor
-server.listen(port, () => {
-    console.log('\n🚀 ================================');
-    console.log('🤖 Alfa Bot iniciado exitosamente');
-    console.log('🚀 ================================');
-    console.log(`📡 Servidor: ${server.name} v${server.version}`);
-    console.log(`🌐 URL: ${server.url}`);
-    console.log(`🔌 Puerto: ${port}`);
-    console.log(`🔐 OAuth: ${connectionName}`);
-    console.log('\n📚 Endpoints disponibles:');
-    console.log('   POST /api/messages   - Mensajes del bot');
-    console.log('   GET  /health         - Estado del servicio');
-    console.log('   GET  /info           - Información del bot');
-    console.log('   GET  /debug          - Debug (solo desarrollo)');
-    console.log('   GET  /oauthcallback  - Callback OAuth');
-    console.log('\n🔗 Enlaces útiles:');
-    console.log('   Bot Framework Emulator: https://docs.microsoft.com/azure/bot-service/bot-service-debug-emulator');
-    console.log('   Teams Developer Portal: https://dev.teams.microsoft.com/');
-    console.log('\n✅ Bot listo para recibir mensajes');
-    console.log('🎯 Tarjetas adaptativas habilitadas y optimizadas');
-    console.log('🔧 Compatible con Web Chat y Microsoft Teams\n');
-});
+// Función principal
+async function main() {
+    const server = new BotServer();
+    await server.initialize();
+}
 
-// Manejo de señales del sistema
-process.on('SIGINT', () => {
-    console.log('\n🛑 Recibida señal SIGINT, cerrando servidor...');
-    server.close(() => {
-        console.log('✅ Servidor cerrado correctamente');
-        process.exit(0);
-    });
-});
-
-process.on('SIGTERM', () => {
-    console.log('\n🛑 Recibida señal SIGTERM, cerrando servidor...');
-    server.close(() => {
-        console.log('✅ Servidor cerrado correctamente');
-        process.exit(0);
-    });
-});
-
-// Control de errores no manejados
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ Unhandled Promise Rejection:', reason);
-    console.error('En la promesa:', promise);
-    // No cerrar el proceso, solo registrar
-});
-
-process.on('uncaughtException', (error) => {
-    console.error('❌ Uncaught Exception:', error.message);
-    console.error(error.stack);
-    
-    // Intentar cerrar el servidor gracefully
-    server.close(() => {
-        console.log('🛑 Servidor cerrado debido a excepción no manejada');
+// Iniciar aplicación si es el módulo principal
+if (require.main === module) {
+    main().catch(error => {
+        console.error('❌ Error fatal al iniciar aplicación:', error);
         process.exit(1);
     });
-    
-    // Si no se puede cerrar en 10 segundos, forzar el cierre
-    setTimeout(() => {
-        console.log('🚨 Forzando cierre del proceso');
-        process.exit(1);
-    }, 10000);
-});
+}
 
-// Limpiar usuarios completados del diálogo cada hora
-setInterval(() => {
-    try {
-        if (dialog && typeof dialog.clearCompletedUsers === 'function') {
-            dialog.clearCompletedUsers();
-            console.log('🧹 Lista de usuarios completados limpiada (mantenimiento programado)');
-        }
-    } catch (error) {
-        console.warn('⚠️ Error en mantenimiento programado:', error.message);
-    }
-}, 60 * 60 * 1000); // 1 hora
-
-console.log('🎯 Proceso de inicialización completado');
-console.log(`🔧 Variables de entorno configuradas: ${Object.keys(process.env).filter(k => k.startsWith('MICROSOFT_APP') || k.startsWith('OAUTH') || k.startsWith('OPENAI')).length}`);
-console.log('⏳ Esperando actividades...\n');
+module.exports = { BotServer };

@@ -1,65 +1,78 @@
+// openaiService.js - Versión optimizada y confiable
+
 const OpenAI = require('openai');
 const { DateTime } = require('luxon');
 const axios = require('axios');
-const https = require('https');
 const { SearchClient, AzureKeyCredential } = require('@azure/search-documents');
 const { CardFactory } = require('botbuilder');
 require('dotenv').config();
 
 /**
- * Clase para gestionar la integración con OpenAI y herramientas (incluye tarjetas dinámicas mejoradas)
+ * Servicio OpenAI optimizado con herramientas esenciales
  */
 class OpenAIService {
     constructor() {
-        // Inicializar cliente de OpenAI si está configurado
+        this.initializeOpenAI();
+        this.initializeAzureSearch();
+        this.tools = this.defineTools();
+        this.apiActions = this.defineApiActions();
+        
+        console.log('OpenAIService inicializado correctamente');
+    }
+
+    /**
+     * Inicializa cliente OpenAI
+     */
+    initializeOpenAI() {
         try {
             const apiKey = process.env.OPENAI_API_KEY;
             if (!apiKey) {
-                console.warn('No se ha configurado OPENAI_API_KEY');
+                console.warn('OpenAI API key no configurada');
                 this.openaiAvailable = false;
-            } else {
-                this.openai = new OpenAI({ apiKey });
-                this.openaiAvailable = true;
-                console.log('OpenAIService: Cliente de OpenAI inicializado correctamente');
+                return;
             }
+            
+            this.openai = new OpenAI({ apiKey });
+            this.openaiAvailable = true;
+            console.log('Cliente OpenAI inicializado');
+            
         } catch (error) {
-            console.error(`Error al inicializar OpenAI: ${error.message}`);
+            console.error('Error inicializando OpenAI:', error.message);
             this.openaiAvailable = false;
         }
+    }
 
-        // Inicializar cliente de Azure Cognitive Search si está configurado
+    /**
+     * Inicializa Azure Search
+     */
+    initializeAzureSearch() {
         try {
             const serviceEndpoint = process.env.SERVICE_ENDPOINT;
             const apiKey = process.env.API_KEY;
             const indexName = process.env.INDEX_NAME || 'alfa_bot';
             
             if (!serviceEndpoint || !apiKey) {
-                console.warn('No se ha configurado Azure Search correctamente');
+                console.warn('Azure Search no configurado');
                 this.searchAvailable = false;
-            } else {
-                this.searchClient = new SearchClient(
-                    serviceEndpoint,
-                    indexName,
-                    new AzureKeyCredential(apiKey)
-                );
-                this.searchAvailable = true;
-                console.log('OpenAIService: Cliente de Azure Search inicializado correctamente');
+                return;
             }
+            
+            this.searchClient = new SearchClient(
+                serviceEndpoint,
+                indexName,
+                new AzureKeyCredential(apiKey)
+            );
+            this.searchAvailable = true;
+            console.log('Cliente Azure Search inicializado');
+            
         } catch (error) {
-            console.error(`Error al inicializar Azure Search: ${error.message}`);
+            console.error('Error inicializando Azure Search:', error.message);
             this.searchAvailable = false;
         }
-
-        // Definir herramientas disponibles para el agente
-        this.tools = this.defineTools();
-        
-        // Configuración de acciones de API para las tarjetas
-        this.apiActions = this.defineApiActions();
     }
 
     /**
-     * Define las herramientas disponibles para el Agente
-     * @returns {Array} Lista de herramientas en formato OpenAI
+     * Define herramientas disponibles (simplificadas)
      */
     defineTools() {
         const tools = [
@@ -67,87 +80,25 @@ class OpenAIService {
                 type: "function",
                 function: {
                     name: "FechaHoy",
-                    description: "Devuelve la fecha actual (zona horaria MX) en formato ISO.",
-                    parameters: {
-                        type: "object",
-                        properties: {}
-                    }
+                    description: "Devuelve la fecha actual en zona horaria de México",
+                    parameters: { type: "object", properties: {} }
                 }
             },
-            // HERRAMIENTA MEJORADA PARA VACACIONES MÁS ESTRICTA
             {
                 type: "function",
                 function: {
                     name: "generar_tarjeta_vacaciones",
-                    description: "Genera tarjetas para solicitudes de vacaciones. USAR SOLO cuando el usuario sea específico sobre qué quiere hacer con vacaciones.",
+                    description: "Genera tarjeta para solicitar vacaciones regulares",
                     parameters: {
                         type: "object",
                         properties: {
-                            tipo_solicitud: {
+                            tipo: {
                                 type: "string",
-                                enum: ["consultar", "solicitar", "simular", "informacion_general"],
-                                description: "Tipo específico de operación de vacaciones"
+                                enum: ["solicitar", "simular", "consultar"],
+                                description: "Tipo de operación de vacaciones"
                             }
                         },
-                        required: ["tipo_solicitud"]
-                    }
-                }
-            },
-            // NUEVA HERRAMIENTA PARA GUIAR PROCESO DE SOLICITUD
-            {
-                type: "function",
-                function: {
-                    name: "guiar_proceso_vacaciones",
-                    description: "Guía al usuario cuando quiere solicitar vacaciones pero no especifica el tipo. Pregunta qué tipo de vacaciones necesita.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            mensaje_usuario: {
-                                type: "string",
-                                description: "Mensaje original del usuario sobre vacaciones"
-                            }
-                        },
-                        required: ["mensaje_usuario"]
-                    }
-                }
-            },
-            // HERRAMIENTAS PARA CONSULTAS DIRECTAS
-            {
-                type: "function",
-                function: {
-                    name: "consultar_mis_solicitudes",
-                    description: "Consulta directamente las solicitudes de vacaciones del usuario sin tarjeta.",
-                    parameters: {
-                        type: "object",
-                        properties: {}
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "consultar_solicitudes_dependientes",
-                    description: "Consulta directamente las solicitudes de vacaciones de los dependientes del usuario sin tarjeta.",
-                    parameters: {
-                        type: "object",
-                        properties: {}
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "consultar_solicitud_por_id",
-                    description: "Consulta directamente una solicitud específica por ID sin tarjeta.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            id_solicitud: {
-                                type: "string",
-                                description: "ID de la solicitud a consultar"
-                            }
-                        },
-                        required: ["id_solicitud"]
+                        required: ["tipo"]
                     }
                 }
             },
@@ -155,192 +106,118 @@ class OpenAIService {
                 type: "function",
                 function: {
                     name: "generar_tarjeta_matrimonio",
-                    description: "Genera tarjeta para solicitar vacaciones por matrimonio cuando mencionen boda, matrimonio, casarse, luna de miel o permisos por matrimonio.",
-                    parameters: {
-                        type: "object",
-                        properties: {}
-                    }
+                    description: "Genera tarjeta para vacaciones por matrimonio",
+                    parameters: { type: "object", properties: {} }
                 }
             },
             {
                 type: "function",
                 function: {
-                    name: "generar_tarjeta_nacimiento",
-                    description: "Genera tarjeta para solicitar vacaciones por nacimiento cuando mencionen bebé, nacimiento, paternidad, maternidad o permisos por hijo.",
-                    parameters: {
-                        type: "object",
-                        properties: {}
-                    }
+                    name: "generar_tarjeta_nacimiento", 
+                    description: "Genera tarjeta para vacaciones por nacimiento",
+                    parameters: { type: "object", properties: {} }
                 }
             },
             {
                 type: "function",
                 function: {
-                    name: "generar_tarjeta_autorizacion",
-                    description: "Genera tarjetas para autorizar, rechazar o cancelar solicitudes cuando mencionen aprobar, autorizar, rechazar, cancelar solicitudes o gestión de solicitudes.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            accion: {
-                                type: "string",
-                                enum: ["autorizar", "rechazar", "cancelar"],
-                                description: "Acción a realizar en la solicitud"
-                            }
-                        },
-                        required: ["accion"]
-                    }
+                    name: "consultar_mis_solicitudes",
+                    description: "Consulta las solicitudes de vacaciones del usuario",
+                    parameters: { type: "object", properties: {} }
                 }
             }
         ];
-        
-        // Añadir herramientas de búsqueda
+
+        // Agregar búsqueda si está disponible
         if (this.searchAvailable) {
-            tools.push(
-                {
-                    type: "function",
-                    function: {
-                        name: "referencias",
-                        description: "USAR SOLO cuando el usuario pida explícitamente buscar en documentos, políticas específicas, procedimientos detallados o manuales.",
-                        parameters: {
-                            type: "object",
-                            properties: {
-                                consulta: { 
-                                    type: "string", 
-                                    description: "Texto específico a buscar en documentos" 
-                                }
-                            },
-                            required: ["consulta"]
-                        }
+            tools.push({
+                type: "function",
+                function: {
+                    name: "buscar_documentos",
+                    description: "Busca información en documentos corporativos",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            consulta: {
+                                type: "string",
+                                description: "Texto a buscar en documentos"
+                            }
+                        },
+                        required: ["consulta"]
                     }
                 }
-            );
+            });
         }
-        
-        // Añadir herramientas de Bubble
+
+        // Agregar herramientas Bubble si están disponibles
         if (process.env.TOKEN_BUBBLE) {
             tools.push(
                 {
                     type: "function",
                     function: {
-                        name: "comedor",
-                        description: "Consulta el menú del comedor para un día específico. Solo usar cuando el usuario pregunta explícitamente por el menú o comida.",
+                        name: "consultar_menu_comedor",
+                        description: "Consulta el menú del comedor para un día específico",
                         parameters: {
                             type: "object",
                             properties: {
-                                filtro_dia: { 
-                                    type: "string", 
-                                    description: "Día a consultar (formato: YYYY-MM-DD o día de la semana)" 
+                                dia: {
+                                    type: "string",
+                                    description: "Día a consultar (YYYY-MM-DD)"
                                 }
                             },
-                            required: ["filtro_dia"]
+                            required: ["dia"]
                         }
                     }
                 },
                 {
                     type: "function",
                     function: {
-                        name: "informacion_personal",
-                        description: "Obtiene datos personales de un empleado. Solo usar cuando el usuario específicamente solicita información de un empleado.",
+                        name: "buscar_empleado",
+                        description: "Busca empleados en el directorio",
                         parameters: {
                             type: "object",
                             properties: {
-                                email: { 
-                                    type: "string", 
-                                    description: "Correo institucional del empleado" 
-                                }
+                                nombre: { type: "string", description: "Nombre del empleado" },
+                                apellido: { type: "string", description: "Apellido del empleado" }
                             },
-                            required: ["email"]
-                        }
-                    }
-                },
-                {
-                    type: "function",
-                    function: {
-                        name: "directorio",
-                        description: "Busca empleados en el directorio corporativo. Solo usar cuando el usuario busca contactos o información de empleados.",
-                        parameters: {
-                            type: "object",
-                            properties: {
-                                nombre: { 
-                                    type: "string", 
-                                    description: "Nombre del empleado" 
-                                },
-                                apellido: { 
-                                    type: "string", 
-                                    description: "Apellido del empleado" 
-                                }
-                            },
-                            required: ["nombre", "apellido"]
+                            required: ["nombre"]
                         }
                     }
                 }
             );
         }
-        
+
         return tools;
     }
 
     /**
-     * Define las acciones de API disponibles para las tarjetas
-     * @returns {Object} Configuración de acciones
+     * Define acciones de API para tarjetas
      */
     defineApiActions() {
         return {
             vacaciones: {
-                solicitar_vacaciones: {
+                solicitar: {
                     title: 'Solicitar Vacaciones',
-                    description: 'Simula o solicita vacaciones para un rango de fechas',
+                    description: 'Solicita vacaciones para un rango de fechas',
                     method: 'POST',
                     url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{fechaInicio}/{fechaFin}/{medioDia}/{simular}',
                     fields: [
-                        { 
-                            id: 'fechaInicio', 
-                            type: 'date', 
-                            label: 'Fecha de inicio', 
-                            placeholder: 'Ej: 2025-06-18',
-                            required: true 
-                        },
-                        { 
-                            id: 'fechaFin', 
-                            type: 'date', 
-                            label: 'Fecha de fin', 
-                            placeholder: 'Ej: 2025-06-25',
-                            required: true 
-                        },
-                        { 
-                            id: 'medioDia', 
-                            type: 'choice', 
-                            label: '¿Medio día?', 
-                            value: 'false', 
-                            choices: ['true', 'false'], 
-                            required: true 
-                        },
-                        { 
-                            id: 'simular', 
-                            type: 'choice', 
-                            label: '¿Solo simular?', 
-                            value: 'true', 
-                            choices: ['true', 'false'], 
-                            required: true 
-                        }
+                        { id: 'fechaInicio', type: 'date', label: 'Fecha de inicio', required: true },
+                        { id: 'fechaFin', type: 'date', label: 'Fecha de fin', required: true },
+                        { id: 'medioDia', type: 'choice', label: '¿Medio día?', value: 'false', choices: ['true', 'false'], required: true },
+                        { id: 'simular', type: 'choice', label: '¿Solo simular?', value: 'true', choices: ['true', 'false'], required: true }
                     ],
-                    icon: '🎯'
+                    icon: '🏖️'
                 }
             },
             matrimonio: {
                 solicitar: {
                     title: 'Vacaciones por Matrimonio',
-                    description: 'Solicita vacaciones por matrimonio con fecha específica',
+                    description: 'Solicita vacaciones por matrimonio',
                     method: 'POST',
                     url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/matrimonio/{fechaMatrimonio}',
                     fields: [
-                        { 
-                            id: 'fechaMatrimonio', 
-                            type: 'date', 
-                            label: 'Fecha de Matrimonio',
-                            placeholder: 'Ej: 2025-06-18',
-                            required: true 
-                        }
+                        { id: 'fechaMatrimonio', type: 'date', label: 'Fecha de Matrimonio', required: true }
                     ],
                     icon: '💍'
                 }
@@ -348,127 +225,33 @@ class OpenAIService {
             nacimiento: {
                 solicitar: {
                     title: 'Vacaciones por Nacimiento',
-                    description: 'Solicita vacaciones por nacimiento con fecha específica',
+                    description: 'Solicita vacaciones por nacimiento',
                     method: 'POST',
                     url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/nacimiento/{fechaNacimiento}',
                     fields: [
-                        { 
-                            id: 'fechaNacimiento', 
-                            type: 'date', 
-                            label: 'Fecha de Nacimiento',
-                            placeholder: 'Ej: 2025-06-18',
-                            required: true 
-                        }
+                        { id: 'fechaNacimiento', type: 'date', label: 'Fecha de Nacimiento', required: true }
                     ],
                     icon: '👶'
-                }
-            },
-            autorizacion: {
-                autorizar: {
-                    title: 'Autorizar Solicitud',
-                    description: 'Autoriza una solicitud de vacaciones por ID',
-                    method: 'PUT',
-                    url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/autorizar',
-                    fields: [
-                        {
-                            id: 'idSolicitud',
-                            type: 'text',
-                            label: 'ID de Solicitud',
-                            placeholder: 'Ej: 12345',
-                            required: true
-                        }
-                    ],
-                    icon: '✅'
-                },
-                rechazar: {
-                    title: 'Rechazar Solicitud',
-                    description: 'Rechaza una solicitud de vacaciones por ID',
-                    method: 'PUT',
-                    url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/rechazar',
-                    fields: [
-                        {
-                            id: 'idSolicitud',
-                            type: 'text',
-                            label: 'ID de Solicitud',
-                            placeholder: 'Ej: 12345',
-                            required: true
-                        }
-                    ],
-                    icon: '❌'
-                },
-                cancelar: {
-                    title: 'Cancelar Solicitud',
-                    description: 'Cancela una solicitud de vacaciones por ID',
-                    method: 'PUT',
-                    url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/{idSolicitud}/cancelar',
-                    fields: [
-                        { 
-                            id: 'idSolicitud', 
-                            type: 'text', 
-                            label: 'ID de Solicitud', 
-                            placeholder: 'Ej: 12345', 
-                            required: true 
-                        }
-                    ],
-                    icon: '🚫'
                 }
             }
         };
     }
 
     /**
-     * Detecta si el mensaje requiere uso de herramientas específicas
-     * @param {string} mensaje - Mensaje del usuario
-     * @returns {boolean} - Si debe evitar usar herramientas
+     * Procesa mensaje con OpenAI
      */
-    _shouldAvoidTools(mensaje) {
-        const mensajeLower = mensaje.toLowerCase();
-        
-        // Evitar herramientas para comandos del bot básicos
-        const comandosBot = [
-            'login', 'logout', 'ayuda', 'help', 
-            'token', 'autenticar', 'iniciar sesion', 'cerrar sesion',
-            'commands', 'comandos'
-        ];
-        
-        // Si contiene comandos del bot básicos, evitar herramientas
-        if (comandosBot.some(comando => mensajeLower.includes(comando))) {
-            return true;
-        }
-        
-        return false;
-    }
-
-    /**
-     * Procesa una consulta con el agente de OpenAI
-     * @param {string} mensaje - Mensaje del usuario
-     * @param {Array} historial - Historial de conversación
-     * @returns {Object} - Respuesta del agente
-     */
-    async procesarMensaje(mensaje, historial) {
+    async procesarMensaje(mensaje, historial = []) {
         try {
-            // Verificar que OpenAI esté disponible
             if (!this.openaiAvailable) {
-                console.error('OpenAI no está configurado correctamente');
                 return {
                     type: 'text',
-                    content: "Lo siento, el servicio de OpenAI no está disponible en este momento. Por favor, contacta al administrador."
+                    content: 'El servicio de OpenAI no está disponible actualmente.'
                 };
             }
-            
-            // Verificar si debemos evitar usar herramientas
-            const evitarHerramientas = this._shouldAvoidTools(mensaje);
-            
-            // Convertir historial al formato esperado por OpenAI
-            const mensajes = this.formatearHistorial(historial);
-            
-            // Agregar mensaje actual del usuario
-            mensajes.push({
-                role: "user",
-                content: mensaje
-            });
 
-            // Configuración para la llamada a OpenAI
+            const mensajes = this.formatearHistorial(historial);
+            mensajes.push({ role: "user", content: mensaje });
+
             const requestConfig = {
                 model: "gpt-4-turbo",
                 messages: mensajes,
@@ -476,157 +259,75 @@ class OpenAIService {
                 max_tokens: 1500
             };
 
-            // Solo agregar herramientas si no debemos evitarlas y hay herramientas disponibles
-            if (!evitarHerramientas && this.tools.length > 0) {
+            // Agregar herramientas si no es comando básico
+            if (!this.esComandoBasico(mensaje)) {
                 requestConfig.tools = this.tools;
                 requestConfig.tool_choice = "auto";
             }
 
-            // Crear el agente de OpenAI
             const response = await this.openai.chat.completions.create(requestConfig);
-
-            // Obtener respuesta
             const messageResponse = response.choices[0].message;
 
-            // Verificar si el agente quiere ejecutar herramientas
-            if (messageResponse.tool_calls && !evitarHerramientas) {
-                // Procesar llamadas a herramientas
-                const toolResults = await this.procesarLlamadasHerramientas(messageResponse.tool_calls);
-                
-                // Verificar si alguna herramienta devolvió una tarjeta
-                const cardResult = toolResults.find(result => result.card);
-                if (cardResult) {
-                    return {
-                        type: 'card',
-                        content: cardResult.textContent || "Aquí tienes la acción que necesitas:",
-                        card: cardResult.card
-                    };
-                }
-                
-                // Enviar resultados de herramientas al agente para completar respuesta
-                const finalMessages = [
-                    ...mensajes,
-                    messageResponse,
-                    ...toolResults.map(result => ({
-                        role: "tool",
-                        tool_call_id: result.tool_call_id,
-                        content: result.content
-                    }))
-                ];
-
-                // Obtener respuesta final
-                const finalResponse = await this.openai.chat.completions.create({
-                    model: "gpt-4-turbo",
-                    messages: finalMessages,
-                    temperature: 0.7,
-                    max_tokens: 1500
-                });
-
-                return {
-                    type: 'text',
-                    content: finalResponse.choices[0].message.content
-                };
+            // Procesar llamadas a herramientas
+            if (messageResponse.tool_calls) {
+                return await this.procesarHerramientas(messageResponse, mensajes);
             }
 
-            // Si no se requieren herramientas, devolver respuesta directa
             return {
                 type: 'text',
                 content: messageResponse.content
             };
+
         } catch (error) {
-            console.error(`Error al procesar mensaje con OpenAI: ${error.message}`);
-            console.error(error.stack);
-            
-            // Respuestas más específicas según el tipo de error
-            if (error.code === 'rate_limit_exceeded') {
-                return {
-                    type: 'text',
-                    content: "He alcanzado el límite de consultas por minuto. Por favor, espera un momento e intenta de nuevo."
-                };
-            } else if (error.code === 'insufficient_quota') {
-                return {
-                    type: 'text',
-                    content: "El servicio ha alcanzado su límite de uso. Por favor, contacta al administrador."
-                };
-            } else {
-                return {
-                    type: 'text',
-                    content: "Lo siento, hubo un error al procesar tu solicitud. Por favor, inténtalo de nuevo en unos momentos."
-                };
-            }
+            console.error('Error en OpenAI:', error.message);
+            return this.manejarErrorOpenAI(error);
         }
     }
 
     /**
-     * Formatea historial de conversación al formato de OpenAI
-     * @param {Array} historial - Historial desde CosmosDB o memoria
-     * @returns {Array} - Mensajes en formato OpenAI
+     * Verifica si es un comando básico del bot
+     */
+    esComandoBasico(mensaje) {
+        const comandos = ['login', 'logout', 'ayuda', 'help'];
+        return comandos.some(cmd => mensaje.toLowerCase().includes(cmd));
+    }
+
+    /**
+     * Formatea historial para OpenAI
      */
     formatearHistorial(historial) {
-        // Mensaje de sistema inicial con instrucciones MEJORADAS
         const mensajes = [{
             role: "system",
-            content: `Eres un asistente inteligente que ayuda a los empleados de Alfa Corporation. 
+            content: `Eres un asistente corporativo para Alfa Corporation. Ayudas con:
 
-INSTRUCCIONES ESPECÍFICAS PARA VACACIONES:
+🏖️ VACACIONES:
+- Solicitar vacaciones regulares, por matrimonio o nacimiento
+- Consultar estado de solicitudes
+- Simular disponibilidad de días
 
-🔒 REGLAS DE VACACIONES:
-1. Si preguntan sobre vacaciones de forma GENERAL: 
-   - Explica brevemente los tipos de vacaciones disponibles
-   - SIEMPRE genera la tarjeta con tipo "informacion_general"
+📚 INFORMACIÓN:
+- Buscar en documentos corporativos
+- Consultar directorio de empleados
+- Revisar menú del comedor
 
-2. Si quieren SOLICITAR vacaciones:
-   - OBLIGATORIO: Preguntar primero el tipo de vacación
-   - Tipos disponibles: Regular, Matrimonio, Nacimiento
-   - Solo después de definir el tipo, mostrar la tarjeta correspondiente
+INSTRUCCIONES:
+- Responde en español de manera profesional
+- Usa herramientas apropiadas según la consulta
+- Para vacaciones: determina tipo específico antes de generar tarjetas
+- Para búsquedas: usa herramientas de búsqueda disponibles
 
-3. CONSULTAS DIRECTAS (SIN TARJETA):
-   - Para "mis solicitudes" o "ver mis vacaciones" → usar consultar_mis_solicitudes
-   - Para "solicitudes de dependientes" → usar consultar_solicitudes_dependientes  
-   - Para "consultar solicitud ID" → usar consultar_solicitud_por_id
-
-4. Si quieren SIMULAR vacaciones:
-   - Usar generar_tarjeta_vacaciones(tipo_solicitud: "simular")
-
-PATRONES DE DETECCIÓN:
-- "información sobre vacaciones" = tipo "informacion_general"
-- "solicitar vacaciones" SIN especificar tipo = usar guiar_proceso_vacaciones
-- "mis solicitudes" = consultar_mis_solicitudes (DIRECTO)
-- "solicitudes dependientes" = consultar_solicitudes_dependientes (DIRECTO)
-- "consultar solicitud 12345" = consultar_solicitud_por_id (DIRECTO)
-- "matrimonio" + "vacaciones" = generar_tarjeta_matrimonio()
-- "nacimiento" + "vacaciones" = generar_tarjeta_nacimiento()
-
-OTRAS HERRAMIENTAS:
-- Solo usa "referencias" cuando pidan buscar en documentos específicos
-- Solo usa "comedor" cuando pregunten por menú del día
-- Solo usa "directorio" cuando busquen contactos de empleados
-
-COMANDOS DEL BOT:
-- Si mencionan "login", "ayuda", "token": responde directamente SIN usar herramientas
-
-Siempre responde en español de manera amable y profesional.
-                     
 Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yyyy')}`
         }];
 
-        // Convertir mensajes del historial
+        // Agregar historial reciente (últimos 10 mensajes)
         if (historial && historial.length > 0) {
-            const recentHistory = historial.slice(-10);
-            
-            recentHistory.forEach(item => {
+            const recientes = historial.slice(-10);
+            recientes.forEach(item => {
                 if (item.message && item.message.trim()) {
-                    if (item.type === 'user') {
-                        mensajes.push({
-                            role: "user",
-                            content: item.message
-                        });
-                    } else if (item.type === 'assistant') {
-                        mensajes.push({
-                            role: "assistant",
-                            content: item.message
-                        });
-                    }
+                    mensajes.push({
+                        role: item.type === 'user' ? "user" : "assistant",
+                        content: item.message
+                    });
                 }
             });
         }
@@ -635,123 +336,155 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
     }
 
     /**
-     * Procesa llamadas a herramientas desde OpenAI
-     * @param {Array} toolCalls - Llamadas a herramientas solicitadas
-     * @returns {Array} - Mensajes con resultados para OpenAI
+     * Procesa llamadas a herramientas
      */
-    async procesarLlamadasHerramientas(toolCalls) {
+    async procesarHerramientas(messageResponse, mensajes) {
         const resultados = [];
 
-        for (const call of toolCalls) {
+        for (const call of messageResponse.tool_calls) {
             const { function: fnCall, id } = call;
             const { name, arguments: args } = fnCall;
             
             try {
-                // Intentar parsear los argumentos
-                let parsedArgs;
-                try {
-                    parsedArgs = JSON.parse(args);
-                } catch (parseError) {
-                    console.error(`Error al parsear argumentos para ${name}: ${parseError.message}`);
-                    parsedArgs = {};
-                }
+                const parametros = JSON.parse(args);
+                console.log(`Ejecutando herramienta: ${name}`, parametros);
                 
-                console.log(`OpenAI: Ejecutando herramienta ${name} con argumentos:`, parsedArgs);
+                const resultado = await this.ejecutarHerramienta(name, parametros);
                 
-                // Ejecutar la herramienta correspondiente
-                const resultado = await this.ejecutarHerramienta(name, parsedArgs);
-                
-                // Si el resultado incluye una tarjeta, devolverla especialmente
                 if (resultado && resultado.card) {
-                    resultados.push({
-                        tool_call_id: id,
-                        content: resultado.textContent || "Tarjeta generada",
-                        card: resultado.card,
-                        textContent: resultado.textContent
-                    });
-                } else {
-                    // Agregar resultado normal al mensaje
-                    resultados.push({
-                        tool_call_id: id,
-                        content: typeof resultado === 'object' ? JSON.stringify(resultado, null, 2) : String(resultado)
-                    });
+                    return {
+                        type: 'card',
+                        content: resultado.textContent || "Aquí tienes la acción solicitada:",
+                        card: resultado.card
+                    };
                 }
-            } catch (error) {
-                console.error(`Error ejecutando herramienta ${name}: ${error.message}`);
+                
                 resultados.push({
                     tool_call_id: id,
-                    content: `Error: No se pudo ejecutar la herramienta ${name}. ${error.message}`
+                    content: typeof resultado === 'object' ? 
+                        JSON.stringify(resultado, null, 2) : String(resultado)
+                });
+                
+            } catch (error) {
+                console.error(`Error ejecutando herramienta ${name}:`, error);
+                resultados.push({
+                    tool_call_id: id,
+                    content: `Error: ${error.message}`
                 });
             }
         }
 
-        return resultados;
+        // Obtener respuesta final del agente
+        const finalMessages = [
+            ...mensajes,
+            messageResponse,
+            ...resultados.map(result => ({
+                role: "tool",
+                tool_call_id: result.tool_call_id,
+                content: result.content
+            }))
+        ];
+
+        const finalResponse = await this.openai.chat.completions.create({
+            model: "gpt-4-turbo",
+            messages: finalMessages,
+            temperature: 0.7,
+            max_tokens: 1500
+        });
+
+        return {
+            type: 'text',
+            content: finalResponse.choices[0].message.content
+        };
     }
 
     /**
-     * Ejecuta una herramienta específica
-     * @param {string} nombre - Nombre de la herramienta
-     * @param {Object} parametros - Parámetros para la herramienta
-     * @returns {any} - Resultado de la ejecución
+     * Ejecuta herramienta específica
      */
     async ejecutarHerramienta(nombre, parametros) {
         switch (nombre) {
             case 'FechaHoy':
                 return DateTime.now().setZone('America/Mexico_City').toISODate();
-                
-            // HERRAMIENTAS DE VACACIONES
+
             case 'generar_tarjeta_vacaciones':
-                return this.generarTarjetaVacaciones(parametros.tipo_solicitud);
-                
-            case 'guiar_proceso_vacaciones':
-                return this.ejecutarGuiarProcesoVacaciones(parametros.mensaje_usuario);
-                
-            // CONSULTAS DIRECTAS (SIN TARJETA)
-            case 'consultar_mis_solicitudes':
-                return await this.ejecutarConsultarMisSolicitudes();
-                
-            case 'consultar_solicitudes_dependientes':
-                return await this.ejecutarConsultarSolicitudesDependientes();
-                
-            case 'consultar_solicitud_por_id':
-                return await this.ejecutarConsultarSolicitudPorId(parametros.id_solicitud);
-                
-            // TARJETAS ESPECÍFICAS
+                return this.generarTarjetaVacaciones(parametros.tipo);
+
             case 'generar_tarjeta_matrimonio':
                 return this.generarTarjetaMatrimonio();
-                
+
             case 'generar_tarjeta_nacimiento':
                 return this.generarTarjetaNacimiento();
-                
-            case 'generar_tarjeta_autorizacion':
-                return this.generarTarjetaAutorizacion(parametros.accion);
-                
-            // HERRAMIENTAS DE BÚSQUEDA
-            case 'referencias':
-                return await this.ejecutarReferencias(parametros.consulta);
-                
-            // HERRAMIENTAS DE BUBBLE
-            case 'comedor':
-                return await this.ejecutarComedor(parametros.filtro_dia);
-                
-            case 'informacion_personal':
-                return await this.ejecutarInformacionPersonal(parametros.email);
-                
-            case 'directorio':
-                return await this.ejecutarDirectorio(parametros.nombre, parametros.apellido);
-                
+
+            case 'consultar_mis_solicitudes':
+                return await this.consultarMisSolicitudes();
+
+            case 'buscar_documentos':
+                return await this.buscarEnDocumentos(parametros.consulta);
+
+            case 'consultar_menu_comedor':
+                return await this.consultarMenuComedor(parametros.dia);
+
+            case 'buscar_empleado':
+                return await this.buscarEmpleado(parametros.nombre, parametros.apellido);
+
             default:
                 throw new Error(`Herramienta desconocida: ${nombre}`);
         }
     }
 
-    // MÉTODOS PARA CONSULTAS DIRECTAS
+    /**
+     * Genera tarjeta de vacaciones
+     */
+    generarTarjetaVacaciones(tipo) {
+        const action = this.apiActions.vacaciones.solicitar;
+        
+        // Modificar campos según el tipo
+        if (tipo === 'simular') {
+            action.fields = action.fields.map(field => 
+                field.id === 'simular' ? { ...field, value: 'true' } : field
+            );
+            action.title = 'Simular Vacaciones';
+            action.description = 'Simula una solicitud para verificar disponibilidad';
+        }
+
+        const card = this.crearTarjetaAdaptativa(action);
+        
+        return {
+            textContent: `🏖️ **${action.title}**\n\nCompleta los datos para tu solicitud:`,
+            card: card
+        };
+    }
 
     /**
-     * Ejecuta consulta directa de mis solicitudes
-     * @returns {string} - Resultado de la consulta
+     * Genera tarjeta de matrimonio
      */
-    async ejecutarConsultarMisSolicitudes() {
+    generarTarjetaMatrimonio() {
+        const action = this.apiActions.matrimonio.solicitar;
+        const card = this.crearTarjetaAdaptativa(action);
+        
+        return {
+            textContent: `💍 **Vacaciones por Matrimonio**\n\nSolicita tus días especiales:`,
+            card: card
+        };
+    }
+
+    /**
+     * Genera tarjeta de nacimiento
+     */
+    generarTarjetaNacimiento() {
+        const action = this.apiActions.nacimiento.solicitar;
+        const card = this.crearTarjetaAdaptativa(action);
+        
+        return {
+            textContent: `👶 **Vacaciones por Nacimiento**\n\nSolicita tus días de paternidad/maternidad:`,
+            card: card
+        };
+    }
+
+    /**
+     * Consulta solicitudes del usuario
+     */
+    async consultarMisSolicitudes() {
         try {
             const response = await axios.get(
                 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/empleado',
@@ -764,457 +497,168 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             );
             
             return `📋 **Mis Solicitudes de Vacaciones**\n\n${JSON.stringify(response.data, null, 2)}`;
+            
         } catch (error) {
-            console.error('Error consultando mis solicitudes:', error.message);
-            return `❌ Error al consultar tus solicitudes: ${error.message}`;
+            console.error('Error consultando solicitudes:', error.message);
+            return `❌ Error al consultar solicitudes: ${error.message}`;
         }
     }
 
     /**
-     * Ejecuta consulta directa de solicitudes de dependientes
-     * @returns {string} - Resultado de la consulta
+     * Busca en documentos usando Azure Search
      */
-    async ejecutarConsultarSolicitudesDependientes() {
+    async buscarEnDocumentos(consulta) {
         try {
-            const response = await axios.get(
-                'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/dependientes',
+            if (!this.searchAvailable) {
+                return "El servicio de búsqueda no está disponible.";
+            }
+
+            const embedding = await this.openai.embeddings.create({
+                model: 'text-embedding-3-large',
+                input: consulta,
+                dimensions: 1024
+            });
+            
+            const vectorQuery = {
+                vector: embedding.data[0].embedding,
+                kNearestNeighbors: 3,
+                fields: 'Embedding'
+            };
+            
+            const searchResults = await this.searchClient.search(undefined, {
+                vectorQueries: [vectorQuery],
+                select: ['Chunk', 'FileName'],
+                top: 3
+            });
+
+            const resultados = [];
+            for await (const result of searchResults.results) {
+                const doc = result.document;
+                resultados.push(`**${doc.FileName}**: ${doc.Chunk}`);
+                if (resultados.length >= 3) break;
+            }
+            
+            return resultados.length > 0 ? 
+                `📚 **Resultados encontrados:**\n\n${resultados.join('\n\n')}` :
+                "No se encontraron documentos relevantes.";
+                
+        } catch (error) {
+            console.error('Error en búsqueda:', error.message);
+            return `Error en búsqueda: ${error.message}`;
+        }
+    }
+
+    /**
+     * Consulta menú del comedor
+     */
+    async consultarMenuComedor(dia) {
+        try {
+            if (!process.env.TOKEN_BUBBLE) {
+                return "Servicio de comedor no disponible.";
+            }
+
+            const response = await axios.post(
+                'https://alfa-48373.bubbleapps.io/api/1.1/wf/comedor',
+                { dia },
                 {
-                    headers: {
-                        'Authorization': `Bearer ${process.env.TOKEN_SIRH || 'TOKEN_NO_CONFIGURADO'}`
-                    },
+                    headers: { Authorization: `Bearer ${process.env.TOKEN_BUBBLE}` },
                     timeout: 10000
                 }
             );
             
-            return `👨‍👩‍👧‍👦 **Solicitudes de Dependientes**\n\n${JSON.stringify(response.data, null, 2)}`;
+            return `🍽️ **Menú del ${dia}**\n\n${JSON.stringify(response.data, null, 2)}`;
+            
         } catch (error) {
-            console.error('Error consultando solicitudes de dependientes:', error.message);
-            return `❌ Error al consultar solicitudes de dependientes: ${error.message}`;
+            console.error('Error consultando menú:', error.message);
+            return `Error consultando menú: ${error.message}`;
         }
     }
 
     /**
-     * Ejecuta consulta directa de solicitud por ID
-     * @param {string} idSolicitud - ID de la solicitud
-     * @returns {string} - Resultado de la consulta
+     * Busca empleado en directorio
      */
-    async ejecutarConsultarSolicitudPorId(idSolicitud) {
+    async buscarEmpleado(nombre, apellido = '') {
         try {
-            const response = await axios.get(
-                `https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/${idSolicitud}`,
+            if (!process.env.TOKEN_BUBBLE) {
+                return "Servicio de directorio no disponible.";
+            }
+
+            const response = await axios.post(
+                'https://alfa-48373.bubbleapps.io/api/1.1/wf/directorio',
+                { Nombre: nombre, Apellido: apellido },
                 {
-                    headers: {
-                        'Authorization': `Bearer ${process.env.TOKEN_SIRH || 'TOKEN_NO_CONFIGURADO'}`
-                    },
+                    headers: { Authorization: `Bearer ${process.env.TOKEN_BUBBLE}` },
                     timeout: 10000
                 }
             );
             
-            return `🔍 **Solicitud ID: ${idSolicitud}**\n\n${JSON.stringify(response.data, null, 2)}`;
-        } catch (error) {
-            console.error(`Error consultando solicitud ${idSolicitud}:`, error.message);
-            return `❌ Error al consultar la solicitud ${idSolicitud}: ${error.message}`;
-        }
-    }
-
-    // MÉTODOS PARA GENERAR TARJETAS
-
-    /**
-     * Ejecuta la guía de proceso de vacaciones
-     * @param {string} mensajeUsuario - Mensaje original del usuario
-     * @returns {Object} - Resultado con tarjeta guía
-     */
-    async ejecutarGuiarProcesoVacaciones(mensajeUsuario) {
-        return {
-            textContent: `🏖️ **Proceso de Solicitud de Vacaciones**
-
-Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
-
-**📋 Tipos disponibles:**
-
-**1. 🌴 Vacaciones Regulares**
-   • Días de descanso anuales
-   • Puedes elegir fechas específicas
-   • Incluye opción de simulación
-
-**2. 💍 Vacaciones por Matrimonio**
-   • Días especiales por matrimonio
-   • Requiere fecha de la boda
-   • Beneficio especial para empleados
-
-**3. 👶 Vacaciones por Nacimiento**
-   • Días por paternidad/maternidad
-   • Requiere fecha de nacimiento
-   • Beneficio familiar
-
-**¿Cuál de estos tipos necesitas?**`,
+            return `👥 **Empleado encontrado**\n\n${JSON.stringify(response.data, null, 2)}`;
             
-            card: this.createVacationGuideCard()
-        };
-    }
-
-    /**
-     * Crear tarjeta guía para tipos de vacaciones
-     * @returns {Object} - Tarjeta adaptativa guía
-     */
-    createVacationGuideCard() {
-        const card = {
-            type: 'AdaptiveCard',
-            $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
-            version: '1.3',
-            body: [
-                {
-                    type: 'TextBlock',
-                    text: '🏖️ Tipos de Vacaciones',
-                    size: 'Large',
-                    weight: 'Bolder',
-                    color: 'Accent',
-                    horizontalAlignment: 'Center'
-                },
-                {
-                    type: 'TextBlock',
-                    text: 'Selecciona el tipo de vacaciones que necesitas:',
-                    wrap: true,
-                    spacing: 'Medium'
-                },
-                {
-                    type: 'ColumnSet',
-                    columns: [
-                        {
-                            type: 'Column',
-                            width: 'auto',
-                            items: [
-                                {
-                                    type: 'TextBlock',
-                                    text: '🌴',
-                                    size: 'ExtraLarge'
-                                }
-                            ]
-                        },
-                        {
-                            type: 'Column',
-                            width: 'stretch',
-                            items: [
-                                {
-                                    type: 'TextBlock',
-                                    text: 'Vacaciones Regulares',
-                                    weight: 'Bolder'
-                                },
-                                {
-                                    type: 'TextBlock',
-                                    text: 'Días de descanso anuales con fechas flexibles',
-                                    wrap: true,
-                                    isSubtle: true
-                                }
-                            ]
-                        }
-                    ]
-                },
-                {
-                    type: 'ColumnSet',
-                    columns: [
-                        {
-                            type: 'Column',
-                            width: 'auto',
-                            items: [
-                                {
-                                    type: 'TextBlock',
-                                    text: '💍',
-                                    size: 'ExtraLarge'
-                                }
-                            ]
-                        },
-                        {
-                            type: 'Column',
-                            width: 'stretch',
-                            items: [
-                                {
-                                    type: 'TextBlock',
-                                    text: 'Por Matrimonio',
-                                    weight: 'Bolder'
-                                },
-                                {
-                                    type: 'TextBlock',
-                                    text: 'Días especiales por matrimonio',
-                                    wrap: true,
-                                    isSubtle: true
-                                }
-                            ]
-                        }
-                    ]
-                },
-                {
-                    type: 'ColumnSet',
-                    columns: [
-                        {
-                            type: 'Column',
-                            width: 'auto',
-                            items: [
-                                {
-                                    type: 'TextBlock',
-                                    text: '👶',
-                                    size: 'ExtraLarge'
-                                }
-                            ]
-                        },
-                        {
-                            type: 'Column',
-                            width: 'stretch',
-                            items: [
-                                {
-                                    type: 'TextBlock',
-                                    text: 'Por Nacimiento',
-                                    weight: 'Bolder'
-                                },
-                                {
-                                    type: 'TextBlock',
-                                    text: 'Días por paternidad/maternidad',
-                                    wrap: true,
-                                    isSubtle: true
-                                }
-                            ]
-                        }
-                    ]
-                }
-            ],
-            actions: [
-                {
-                    type: 'Action.Submit',
-                    title: '🌴 Vacaciones Regulares',
-                    data: {
-                        action: 'Solicitar Vacaciones Regulares',
-                        vacation_type: 'regular'
-                    }
-                },
-                {
-                    type: 'Action.Submit',
-                    title: '💍 Por Matrimonio',
-                    data: {
-                        action: 'Solicitar Vacaciones Matrimonio',
-                        vacation_type: 'matrimonio'
-                    }
-                },
-                {
-                    type: 'Action.Submit',
-                    title: '👶 Por Nacimiento',
-                    data: {
-                        action: 'Solicitar Vacaciones Nacimiento',
-                        vacation_type: 'nacimiento'
-                    }
-                }
-            ]
-        };
-
-        return CardFactory.adaptiveCard(card);
-    }
-
-    /**
-     * Genera tarjetas para solicitudes de vacaciones
-     * @param {string} tipoSolicitud - Tipo de solicitud de vacaciones
-     * @returns {Object} - Resultado con tarjeta(s)
-     */
-    generarTarjetaVacaciones(tipoSolicitud) {
-        const actions = [];
-        let textContent = '';
-        
-        switch (tipoSolicitud) {
-            case 'informacion_general':
-                textContent = `📚 **Información General de Vacaciones**
-
-**Tipos de vacaciones disponibles en Alfa Corporation:**
-
-🌴 **Vacaciones Regulares**
-• Días anuales de descanso
-• Planificación flexible de fechas
-• Incluye simulación de disponibilidad
-
-💍 **Vacaciones por Matrimonio**
-• Beneficio especial para empleados
-• Requiere comprobante de matrimonio
-• Días adicionales a los regulares
-
-👶 **Vacaciones por Nacimiento**
-• Paternidad/Maternidad
-• Días por nacimiento de hijo(a)
-• Beneficio familiar
-
-**Usa las opciones a continuación para acceder a las funciones:**`;
-                
-                actions.push(this.apiActions.vacaciones.solicitar_vacaciones);
-                break;
-                
-            case 'solicitar':
-                textContent = `🎯 **Solicitar Vacaciones Regulares**\n\nCompleta tu solicitud de vacaciones:`;
-                actions.push(this.apiActions.vacaciones.solicitar_vacaciones);
-                break;
-                
-            case 'simular':
-                textContent = `🧮 **Simular Solicitud de Vacaciones**\n\nVerifica disponibilidad antes de solicitar:`;
-                actions.push({
-                    ...this.apiActions.vacaciones.solicitar_vacaciones,
-                    title: 'Simular Solicitud de Vacaciones',
-                    description: 'Simula una solicitud para ver días disponibles',
-                    fields: this.apiActions.vacaciones.solicitar_vacaciones.fields.map(field => 
-                        field.id === 'simular' ? { ...field, value: 'true' } : field
-                    )
-                });
-                break;
-                
-            default:
-                textContent = `🏖️ **Gestión de Vacaciones**\n\nSelecciona la opción que necesitas:`;
-                actions.push(this.apiActions.vacaciones.solicitar_vacaciones);
-                break;
+        } catch (error) {
+            console.error('Error buscando empleado:', error.message);
+            return `Error buscando empleado: ${error.message}`;
         }
-        
-        const cards = actions.map(action => this.createAdaptiveCard(action));
-        
-        return {
-            textContent: textContent,
-            card: cards.length === 1 ? cards[0] : cards
-        };
     }
 
     /**
-     * Genera tarjeta para vacaciones por matrimonio
-     * @returns {Object} - Resultado con tarjeta
+     * Crea tarjeta adaptativa
      */
-    generarTarjetaMatrimonio() {
-        const card = this.createAdaptiveCard(this.apiActions.matrimonio.solicitar);
-        
-        return {
-            textContent: `💍 **Vacaciones por Matrimonio**\n\nSolicita tus días por matrimonio:`,
-            card: card
-        };
-    }
-
-    /**
-     * Genera tarjeta para vacaciones por nacimiento
-     * @returns {Object} - Resultado con tarjeta
-     */
-    generarTarjetaNacimiento() {
-        const card = this.createAdaptiveCard(this.apiActions.nacimiento.solicitar);
-        
-        return {
-            textContent: `👶 **Vacaciones por Nacimiento**\n\nSolicita tus días por paternidad/maternidad:`,
-            card: card
-        };
-    }
-
-    /**
-     * Genera tarjetas para autorización de solicitudes
-     * @param {string} accion - Acción a realizar (autorizar, rechazar, cancelar)
-     * @returns {Object} - Resultado con tarjeta
-     */
-    generarTarjetaAutorizacion(accion) {
-        const actionConfig = this.apiActions.autorizacion[accion];
-        const card = this.createAdaptiveCard(actionConfig);
-        
-        return {
-            textContent: `🔧 **Gestión de Solicitudes**\n\nEjecuta la acción "${actionConfig.title}":`,
-            card: card
-        };
-    }
-
-    /**
-     * Crea una tarjeta adaptativa individual
-     * @param {Object} action - Configuración de la acción
-     * @returns {Object} - Tarjeta adaptativa
-     */
-    createAdaptiveCard(action) {
-        // Crear elementos del cuerpo de la tarjeta
+    crearTarjetaAdaptativa(action) {
         const bodyElements = [
-            // TÍTULO PRINCIPAL
             {
                 type: 'TextBlock',
-                text: `${action.icon || '🔧'} ${action.title}`,
+                text: `${action.icon} ${action.title}`,
                 size: 'Large',
                 weight: 'Bolder',
                 color: 'Accent',
-                wrap: true,
                 horizontalAlignment: 'Center'
             },
-            // Separador visual
-            {
-                type: 'TextBlock',
-                text: '━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-                size: 'Small',
-                color: 'Accent',
-                horizontalAlignment: 'Center',
-                spacing: 'Small'
-            },
-            // Descripción
             {
                 type: 'TextBlock',
                 text: action.description,
                 wrap: true,
-                spacing: 'Medium',
-                color: 'Default'
+                spacing: 'Medium'
             }
         ];
 
-        // Agregar campos específicos de la acción
-        if (action.fields && action.fields.length > 0) {
+        // Agregar campos
+        if (action.fields) {
             action.fields.forEach(field => {
-                // Agregar etiqueta del campo
                 bodyElements.push({
                     type: 'TextBlock',
-                    text: `${this._getFieldIcon(field.type)} ${field.label}${field.required ? ' *' : ''}:`,
+                    text: `${field.label}${field.required ? ' *' : ''}:`,
                     weight: 'Bolder',
                     spacing: 'Medium'
                 });
 
-                // Agregar input del campo
-                const inputElement = this._createInputElement(field);
-                bodyElements.push(inputElement);
+                bodyElements.push(this.crearElementoInput(field));
             });
         }
 
-        // Crear la tarjeta adaptativa
         const card = {
             type: 'AdaptiveCard',
             $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
             version: '1.3',
             body: bodyElements,
-            actions: [
-                {
-                    type: 'Action.Submit',
-                    title: `${action.icon || '▶️'} Ejecutar`,
-                    data: {
-                        action: action.title,
-                        method: action.method,
-                        url: action.url
-                    },
-                    style: 'positive'
-                }
-            ],
-            speak: `Acción disponible: ${action.title}. ${action.description}`
+            actions: [{
+                type: 'Action.Submit',
+                title: `${action.icon} Ejecutar`,
+                data: {
+                    action: action.title,
+                    method: action.method,
+                    url: action.url
+                },
+                style: 'positive'
+            }]
         };
 
         return CardFactory.adaptiveCard(card);
     }
 
     /**
-     * Obtiene el icono apropiado para un tipo de campo
-     * @param {string} fieldType - Tipo de campo
-     * @returns {string} - Icono emoji
-     * @private
+     * Crea elemento de input
      */
-    _getFieldIcon(fieldType) {
-        switch (fieldType) {
-            case 'date': return '📅';
-            case 'choice': return '📝';
-            case 'text': return '✏️';
-            default: return '📄';
-        }
-    }
-
-    /**
-     * Crea un elemento de input para un campo específico
-     * @param {Object} field - Configuración del campo
-     * @returns {Object} - Elemento de input
-     * @private
-     */
-    _createInputElement(field) {
+    crearElementoInput(field) {
         const baseInput = {
             id: field.id,
             isRequired: field.required || false,
@@ -1225,7 +669,7 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
             return {
                 ...baseInput,
                 type: 'Input.Date',
-                placeholder: field.placeholder || field.label
+                placeholder: field.label
             };
         } else if (field.type === 'choice' && field.choices) {
             return {
@@ -1239,197 +683,31 @@ Para ayudarte mejor, necesito saber qué tipo de vacaciones quieres solicitar:
             return {
                 ...baseInput,
                 type: 'Input.Text',
-                placeholder: field.placeholder || field.label,
+                placeholder: field.label,
                 value: field.value || ''
             };
         }
     }
 
-    // MÉTODOS DE BÚSQUEDA
-
     /**
-     * Ejecuta búsqueda de referencias en documentos
-     * @param {string} consulta - Texto de búsqueda
-     * @returns {string} - Resultados formateados
+     * Maneja errores de OpenAI
      */
-    async ejecutarReferencias(consulta) {
-        try {
-            if (!this.searchAvailable || !this.searchClient) {
-                return "El servicio de búsqueda en documentos no está disponible en este momento.";
-            }
-            
-            console.log(`Buscando referencias para: "${consulta}"`);
-            
-            const emb = await this.openai.embeddings.create({
-                model: 'text-embedding-3-large',
-                input: consulta,
-                dimensions: 1024
-            });
-            
-            const vectorQuery = {
-                vector: emb.data[0].embedding,
-                kNearestNeighbors: 5,
-                fields: 'Embedding'
+    manejarErrorOpenAI(error) {
+        if (error.code === 'rate_limit_exceeded') {
+            return {
+                type: 'text',
+                content: 'He alcanzado el límite de consultas. Espera un momento e intenta de nuevo.'
             };
-            
-            const filterFolders = [
-                '1727468181184x887443586264191900',
-                '1721838331185x391888654169602750',
-                '1721838293918x578567098933541200',
-                '1721838273084x997249294344777400',
-                '1724297146467x528248112589696500',
-                '1724297132046x157473295543779870',
-                '1724297122954x246675696308903400',
-                '1724297114861x824556494556945700',
-                '1724297105904x395803296537081500',
-                '1724297093236x840642798817826400',
-                '1727468160291x847487420923683800',
-                '1739992558603x917158177162499100',
-                '1739218698126x647518027570958500'
-            ]
-                .map((f) => `Folder eq '${f}'`)
-                .join(' or ');
-
-            const searchResults = await this.searchClient.search(undefined, {
-                vectorQueries: [vectorQuery],
-                select: ['Chunk', 'Adicional', 'FileName'],
-                filter: filterFolders,
-                top: 5
-            });
-
-            const chunks = [];
-            
-            try {
-                for await (const result of searchResults.results) {
-                    const document = result.document;
-                    chunks.push(
-                        `DOCUMENTO: ${document.FileName || 'Sin nombre'}\n` +
-                        `CONTENIDO: ${document.Chunk || 'Sin contenido'}\n` +
-                        `NOTAS: ${document.Adicional || 'N/A'}\n` +
-                        `---`
-                    );
-                    if (chunks.length >= 5) break;
-                }
-            } catch (iterError) {
-                console.error('Error iterando resultados de Azure Search:', iterError.message);
-                
-                try {
-                    const resultsArray = [];
-                    for await (const result of searchResults.results) {
-                        resultsArray.push(result);
-                    }
-                    
-                    for (const result of resultsArray.slice(0, 5)) {
-                        const document = result.document;
-                        chunks.push(
-                            `DOCUMENTO: ${document.FileName || 'Sin nombre'}\n` +
-                            `CONTENIDO: ${document.Chunk || 'Sin contenido'}\n` +
-                            `NOTAS: ${document.Adicional || 'N/A'}\n` +
-                            `---`
-                        );
-                    }
-                } catch (arrayError) {
-                    console.error('Error con método array:', arrayError.message);
-                    return `Error al procesar resultados de búsqueda: ${arrayError.message}`;
-                }
-            }
-            
-            if (chunks.length === 0) {
-                return "No se encontraron documentos relevantes para esta consulta en la base de conocimientos.";
-            }
-            
-            return `Encontré ${chunks.length} referencias relevantes:\n\n` + chunks.join('\n');
-        } catch (error) {
-            console.error(`Error en referencias: ${error.message}`);
-            console.error('Stack trace:', error.stack);
-            return `No se pudo realizar la búsqueda en documentos. Error: ${error.message}`;
-        }
-    }
-
-    // MÉTODOS DE BUBBLE
-
-    /**
-     * Ejecuta consulta de menú de comedor
-     * @param {string} filtro_dia - Día a consultar
-     * @returns {Object} - Menú del día
-     */
-    async ejecutarComedor(filtro_dia) {
-        try {
-            if (!process.env.TOKEN_BUBBLE) {
-                return { error: "El servicio de comedor no está configurado" };
-            }
-            
-            console.log(`Consultando menú del comedor para: ${filtro_dia}`);
-            
-            const res = await axios.post(
-                'https://alfa-48373.bubbleapps.io/api/1.1/wf/comedor',
-                { dia: filtro_dia },
-                { 
-                    headers: { Authorization: `Bearer ${process.env.TOKEN_BUBBLE}` },
-                    timeout: 10000
-                }
-            );
-            return res.data;
-        } catch (error) {
-            console.error(`Error en comedor: ${error.message}`);
-            return { error: `Error al consultar menú del comedor: ${error.message}` };
-        }
-    }
-
-    /**
-     * Ejecuta consulta de información personal
-     * @param {string} email - Correo del empleado
-     * @returns {Object} - Datos personales
-     */
-    async ejecutarInformacionPersonal(email) {
-        try {
-            if (!process.env.TOKEN_BUBBLE) {
-                return { error: "El servicio de información personal no está configurado" };
-            }
-            
-            console.log(`Consultando información personal para: ${email}`);
-            
-            const res = await axios.post(
-                'https://alfa-48373.bubbleapps.io/api/1.1/wf/datos-personales',
-                { email },
-                { 
-                    headers: { Authorization: `Bearer ${process.env.TOKEN_BUBBLE}` },
-                    timeout: 10000
-                }
-            );
-            return res.data;
-        } catch (error) {
-            console.error(`Error en informacion_personal: ${error.message}`);
-            return { error: `Error al consultar información personal: ${error.message}` };
-        }
-    }
-
-    /**
-     * Ejecuta búsqueda en directorio
-     * @param {string} nombre - Nombre del empleado
-     * @param {string} apellido - Apellido del empleado
-     * @returns {Object} - Resultados de la búsqueda
-     */
-    async ejecutarDirectorio(nombre, apellido) {
-        try {
-            if (!process.env.TOKEN_BUBBLE) {
-                return { error: "El servicio de directorio no está configurado" };
-            }
-            
-            console.log(`Buscando en directorio: ${nombre} ${apellido}`);
-            
-            const res = await axios.post(
-                'https://alfa-48373.bubbleapps.io/api/1.1/wf/directorio',
-                { Nombre: nombre, Apellido: apellido },
-                { 
-                    headers: { Authorization: `Bearer ${process.env.TOKEN_BUBBLE}` },
-                    timeout: 10000
-                }
-            );
-            return res.data;
-        } catch (error) {
-            console.error(`Error en directorio: ${error.message}`);
-            return { error: `Error al buscar en directorio: ${error.message}` };
+        } else if (error.code === 'insufficient_quota') {
+            return {
+                type: 'text',
+                content: 'El servicio ha alcanzado su límite de uso. Contacta al administrador.'
+            };
+        } else {
+            return {
+                type: 'text',
+                content: 'Error procesando solicitud. Intenta nuevamente en unos momentos.'
+            };
         }
     }
 }
