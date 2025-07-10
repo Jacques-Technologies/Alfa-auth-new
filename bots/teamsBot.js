@@ -225,8 +225,8 @@ class TeamsBot extends DialogBot {
                 message: item.message
             }));
 
-            // Procesar con OpenAI
-            const response = await this.openaiService.procesarMensaje(text, formattedHistory);
+            // Procesar con OpenAI (pasar context y userId para herramientas)
+            const response = await this.openaiService.procesarMensaje(text, formattedHistory, context, userId);
 
             // Enviar respuesta
             await this.sendOpenAIResponse(context, response, conversationId);

@@ -343,7 +343,7 @@ class OpenAIService {
     /**
      * Procesa mensaje con OpenAI - VERSIÓN CORREGIDA
      */
-    async procesarMensaje(mensaje, historial = []) {
+    async procesarMensaje(mensaje, historial = [], context = null, userId = null) {
         try {
             // Verificar disponibilidad con mejor diagnóstico
             if (!this.openaiAvailable) {
@@ -389,7 +389,7 @@ class OpenAIService {
             // Procesar llamadas a herramientas
             if (messageResponse.tool_calls) {
                 console.log('🔧 Procesando herramientas...');
-                return await this.procesarHerramientas(messageResponse, mensajes);
+                return await this.procesarHerramientas(messageResponse, mensajes, context, userId);
             }
 
             console.log('✅ Respuesta de OpenAI recibida exitosamente');
@@ -485,7 +485,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
     /**
      * Procesa llamadas a herramientas (igual que antes pero con mejor logging)
      */
-    async procesarHerramientas(messageResponse, mensajes) {
+    async procesarHerramientas(messageResponse, mensajes, context = null, userId = null) {
         const resultados = [];
 
         console.log(`🔧 Procesando ${messageResponse.tool_calls.length} herramienta(s)...`);
@@ -498,7 +498,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 const parametros = JSON.parse(args);
                 console.log(`🛠️ Ejecutando herramienta: ${name}`, parametros);
                 
-                const resultado = await this.ejecutarHerramienta(name, parametros);
+                const resultado = await this.ejecutarHerramienta(name, parametros, context, userId);
                 
                 if (resultado && resultado.card) {
                     console.log('🃏 Retornando respuesta con tarjeta');
@@ -552,7 +552,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
     /**
      * Ejecuta herramienta específica (igual que antes)
      */
-    async ejecutarHerramienta(nombre, parametros) {
+    async ejecutarHerramienta(nombre, parametros, context = null, userId = null) {
         switch (nombre) {
             case 'FechaHoy':
                 return DateTime.now().setZone('America/Mexico_City').toISODate();
@@ -567,7 +567,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 return this.generarTarjetaNacimiento();
 
             case 'consultar_mis_solicitudes':
-                return await this.consultarMisSolicitudes();
+                return await this.consultarMisSolicitudes(context, userId);
 
             case 'buscar_documentos':
                 return await this.buscarEnDocumentos(parametros.consulta);
@@ -625,14 +625,29 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         };
     }
 
-    async consultarMisSolicitudes() {
+    async consultarMisSolicitudes(context, userId) {
         try {
-            const token = process.env.TOKEN_SIRH;
             console.log('🏖️ Consultando solicitudes de vacaciones...');
-            console.log(`🔑 TOKEN_SIRH disponible: ${token ? 'SÍ' : 'NO'}`);
-            console.log(`🔑 TOKEN_SIRH preview: ${token ? token.substring(0, 20) + '...' : 'N/A'}`);
             
-            const authHeader = `Bearer ${token || 'TOKEN_NO_CONFIGURADO'}`;
+            // Obtener token del usuario autenticado
+            const bot = global.botInstance; // TeamsBot instance
+            let userToken = null;
+            
+            if (bot && typeof bot.getUserOAuthToken === 'function') {
+                userToken = await bot.getUserOAuthToken(context, userId);
+                console.log(`🔑 Token de usuario obtenido: ${userToken ? 'SÍ' : 'NO'}`);
+                console.log(`🔑 Token preview: ${userToken ? userToken.substring(0, 20) + '...' : 'N/A'}`);
+            } else {
+                console.error('❌ No se pudo obtener instancia del bot o método getUserOAuthToken');
+            }
+            
+            if (!userToken) {
+                return `❌ **Error de autenticación**\n\n` +
+                       `**Problema**: No se pudo obtener token de usuario\n` +
+                       `**Solución**: Intenta hacer logout y login nuevamente`;
+            }
+            
+            const authHeader = `Bearer ${userToken}`;
             console.log(`📤 Authorization header: ${authHeader.substring(0, 30)}...`);
             
             const response = await axios.get(
@@ -659,9 +674,8 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             
             if (error.response?.status === 401) {
                 return `❌ **Error de autenticación (401)**\n\n` +
-                       `**Problema**: Token de SIRH inválido o expirado\n` +
-                       `**Token configurado**: ${process.env.TOKEN_SIRH ? 'SÍ' : 'NO'}\n` +
-                       `**Solución**: Verificar TOKEN_SIRH en variables de entorno`;
+                       `**Problema**: Token de usuario inválido o expirado\n` +
+                       `**Solución**: Intenta hacer logout y login nuevamente`;
             }
             
             return `❌ Error al consultar solicitudes: ${error.message}`;
