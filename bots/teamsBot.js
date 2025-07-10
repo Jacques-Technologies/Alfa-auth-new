@@ -413,15 +413,20 @@ class TeamsBot extends DialogBot {
      */
     async getUserOAuthToken(context, userId) {
         try {
+            console.log(`[${userId}] getUserOAuthToken - Iniciando búsqueda de token...`);
+            
             // Obtener de memoria
             const userInfo = this.authenticatedUsers.get(userId);
             if (userInfo && userInfo.token) {
+                console.log(`[${userId}] getUserOAuthToken - Token encontrado en MEMORIA`);
                 return userInfo.token;
             }
+            console.log(`[${userId}] getUserOAuthToken - Sin token en memoria`);
 
             // Obtener del UserTokenClient
             const userTokenClient = context.turnState.get(context.adapter.UserTokenClientKey);
             const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
+            console.log(`[${userId}] getUserOAuthToken - UserTokenClient disponible: ${!!userTokenClient}, connectionName: ${connectionName}`);
 
             if (userTokenClient && connectionName) {
                 const tokenResponse = await userTokenClient.getUserToken(
@@ -431,13 +436,23 @@ class TeamsBot extends DialogBot {
                 );
 
                 if (tokenResponse && tokenResponse.token) {
+                    console.log(`[${userId}] getUserOAuthToken - Token encontrado en USERTOKENCLIENT`);
                     return tokenResponse.token;
                 }
+                console.log(`[${userId}] getUserOAuthToken - Sin token en UserTokenClient`);
             }
 
             // Obtener del estado persistente
             const authData = await this.authState.get(context, {});
-            return authData[userId]?.token || null;
+            const persistentToken = authData[userId]?.token || null;
+            if (persistentToken) {
+                console.log(`[${userId}] getUserOAuthToken - Token encontrado en ESTADO PERSISTENTE`);
+            } else {
+                console.log(`[${userId}] getUserOAuthToken - Sin token en estado persistente`);
+            }
+            
+            console.log(`[${userId}] getUserOAuthToken - Resultado final: ${persistentToken ? 'TOKEN ENCONTRADO' : 'SIN TOKEN'}`);
+            return persistentToken;
 
         } catch (error) {
             console.error(`[${userId}] Error obteniendo token:`, error);
