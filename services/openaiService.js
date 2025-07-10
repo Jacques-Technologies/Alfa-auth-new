@@ -225,7 +225,7 @@ class OpenAIService {
                 type: "function",
                 function: {
                     name: "consultar_mis_solicitudes",
-                    description: "Consulta las solicitudes de vacaciones del usuario",
+                    description: "Consulta las solicitudes de vacaciones del usuario, así como días disponibles de vacaciones adicionales",
                     parameters: { type: "object", properties: {} }
                 }
             }
@@ -725,7 +725,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             
             const vectorQuery = {
                 vector: embedding.data[0].embedding,
-                kNearestNeighbors: 7,  // Usar mismo valor que el código funcional
+                kNearestNeighbors: 10,  // Incrementar para asegurar suficientes resultados
                 fields: 'Embedding'
             };
             
@@ -733,7 +733,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             const searchResults = await this.searchClient.search(consulta, {
                 vectorQueries: [vectorQuery],
                 select: ['Chunk', 'FileName', 'Adicional'],
-                top: 7
+                top: 10  // Incrementar para asegurar suficientes resultados
             });
 
             console.log('🔍 Procesando resultados...');
@@ -746,13 +746,14 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 const chunk = doc.Chunk?.substring(0, 300) + (doc.Chunk?.length > 300 ? '...' : '');
                 resultados.push(`**${doc.FileName}** (Score: ${result.score?.toFixed(2) || 'N/A'})\n${chunk}`);
                 
-                if (resultados.length >= 3) break;
+                if (resultados.length >= 7) break;  // Limitar a exactamente 7 resultados
             }
             
             console.log(`📊 Total resultados encontrados: ${resultados.length}`);
+            console.log(`🎯 Meta: devolver 7 resultados, obtenidos: ${resultados.length}`);
             
             return resultados.length > 0 ? 
-                `📚 **Resultados encontrados:**\n\n${resultados.join('\n\n---\n\n')}` :
+                `📚 **Resultados encontrados (${resultados.length}):**\n\n${resultados.join('\n\n---\n\n')}` :
                 "No se encontraron documentos relevantes para tu consulta.";
                 
         } catch (error) {
