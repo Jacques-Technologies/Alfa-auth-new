@@ -733,20 +733,64 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             const searchResults = await this.searchClient.search(consulta, {
                 vectorQueries: [vectorQuery],
                 select: ['Chunk', 'FileName', 'Adicional'],
-                top: 10  // Incrementar para asegurar suficientes resultados
+                top: 15,  // Incrementar aún más para obtener más resultados
+                searchMode: 'any',  // Buscar cualquier palabra de la consulta
+                queryType: 'full'   // Usar búsqueda completa
             });
 
             console.log('🔍 Procesando resultados...');
             const resultados = [];
+            const documentosProcesados = new Set(); // Para evitar duplicados del mismo archivo
+            
             for await (const result of searchResults.results) {
                 const doc = result.document;
                 console.log(`📄 Encontrado: ${doc.FileName} (score: ${result.score})`);
                 
                 // Limitar chunk a 300 caracteres para legibilidad
                 const chunk = doc.Chunk?.substring(0, 300) + (doc.Chunk?.length > 300 ? '...' : '');
-                resultados.push(`**${doc.FileName}** (Score: ${result.score?.toFixed(2) || 'N/A'})\n${chunk}`);
+                
+                // Crear clave única para el documento
+                const documentKey = `${doc.FileName}-${doc.Chunk?.substring(0, 50)}`;
+                
+                // Solo agregar si no es un duplicado muy similar
+                if (!documentosProcesados.has(documentKey)) {
+                    documentosProcesados.add(documentKey);
+                    resultados.push(`**${doc.FileName}** (Score: ${result.score?.toFixed(2) || 'N/A'})\n${chunk}`);
+                }
                 
                 if (resultados.length >= 7) break;  // Limitar a exactamente 7 resultados
+            }
+            
+            // Si no tenemos suficientes resultados únicos, intentar búsqueda más amplia
+            if (resultados.length < 7) {
+                console.log(`⚠️ Solo se encontraron ${resultados.length} resultados únicos, intentando búsqueda más amplia...`);
+                
+                // Búsqueda adicional con términos más amplios
+                const palabrasConsulta = consulta.split(' ');
+                if (palabrasConsulta.length > 1) {
+                    const consultaAmplia = palabrasConsulta[0]; // Usar solo la primera palabra
+                    console.log(`🔍 Búsqueda amplia con: "${consultaAmplia}"`);
+                    
+                    const searchResultsAmplia = await this.searchClient.search(consultaAmplia, {
+                        select: ['Chunk', 'FileName', 'Adicional'],
+                        top: 10,
+                        searchMode: 'any'
+                    });
+                    
+                    for await (const result of searchResultsAmplia.results) {
+                        const doc = result.document;
+                        const chunk = doc.Chunk?.substring(0, 300) + (doc.Chunk?.length > 300 ? '...' : '');
+                        const documentKey = `${doc.FileName}-${doc.Chunk?.substring(0, 50)}`;
+                        
+                        if (!documentosProcesados.has(documentKey)) {
+                            documentosProcesados.add(documentKey);
+                            resultados.push(`**${doc.FileName}** (Score: ${result.score?.toFixed(2) || 'N/A'})\n${chunk}`);
+                            console.log(`📄 Agregado desde búsqueda amplia: ${doc.FileName}`);
+                        }
+                        
+                        if (resultados.length >= 7) break;
+                    }
+                }
             }
             
             console.log(`📊 Total resultados encontrados: ${resultados.length}`);
