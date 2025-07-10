@@ -385,48 +385,33 @@ async function handleVacationSimulationResponse(context, response, originalUrl, 
         let message = '';
         let isSuccess = false;
         
-        if (typeof response === 'string') {
-            message = response;
-            // Buscar indicadores de error específicos
-            const lowerResponse = response.toLowerCase();
-            const isError = lowerResponse.includes('error') || 
-                          lowerResponse.includes('rechazad') ||
-                          lowerResponse.includes('negad') ||
-                          lowerResponse.includes('tiene que ser') ||
-                          lowerResponse.includes('debe ser') ||
-                          lowerResponse.includes('no puede') ||
-                          lowerResponse.includes('no es válid') ||
-                          lowerResponse.includes('incorrecto') ||
-                          lowerResponse.includes('inválido') ||
-                          lowerResponse.includes('falta') ||
-                          lowerResponse.includes('requerido') ||
-                          lowerResponse.includes('igual o posterior') ||
-                          lowerResponse.includes('debe coincidir') ||
-                          lowerResponse.includes('formato incorrecto') ||
-                          lowerResponse.includes('no válido') ||
-                          lowerResponse.includes('no permitido') ||
-                          lowerResponse.includes('fecha actual') ||
-                          lowerResponse.includes('fecha de salida') ||
-                          lowerResponse.includes('fecha de regreso');
-            
-            // Indicadores específicos de éxito
-            const successKeywords = lowerResponse.includes('exitoso') || 
-                                  lowerResponse.includes('aprobado') ||
-                                  lowerResponse.includes('disponible') ||
-                                  lowerResponse.includes('vacaciones aprobadas') ||
-                                  lowerResponse.includes('solicitud procesada') ||
-                                  lowerResponse.includes('días disponibles') ||
-                                  lowerResponse.includes('saldo suficiente');
-            
-            // Es exitoso SOLO si tiene palabras de éxito explícitas Y no es error
-            isSuccess = !isError && successKeywords;
-        } else if (typeof response === 'object') {
+        if (typeof response === 'object' && response !== null) {
+            // Usar statusCode para determinar éxito/error
             message = response.message || JSON.stringify(response, null, 2);
-            isSuccess = response.success === true || 
-                       response.resultado?.toLowerCase() === 'exitoso' ||
-                       response.status === 'success' ||
-                       response.status === 200 ||
-                       (response.message && !response.message.toLowerCase().includes('error'));
+            
+            if (response.statusCode !== undefined) {
+                // Si hay statusCode, usarlo como fuente de verdad
+                isSuccess = response.statusCode >= 200 && response.statusCode < 300;
+                console.log(`📊 StatusCode recibido: ${response.statusCode}, isSuccess: ${isSuccess}`);
+            } else {
+                // Fallback a lógica anterior para respuestas sin statusCode
+                isSuccess = response.success === true || 
+                           response.resultado?.toLowerCase() === 'exitoso' ||
+                           response.status === 'success' ||
+                           response.status === 200;
+            }
+        } else if (typeof response === 'string') {
+            message = response;
+            // Para strings, usar lógica de palabras clave más simple
+            const lowerResponse = response.toLowerCase();
+            isSuccess = lowerResponse.includes('exitoso') || 
+                       lowerResponse.includes('aprobado') ||
+                       lowerResponse.includes('disponible') ||
+                       lowerResponse.includes('días disponibles') ||
+                       lowerResponse.includes('saldo suficiente');
+        } else {
+            message = String(response);
+            isSuccess = false;
         }
         
         if (!isSuccess) {

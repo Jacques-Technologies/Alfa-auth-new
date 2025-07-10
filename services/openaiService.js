@@ -493,9 +493,9 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             );
         }
         
-        // Agregar historial reciente (últimos 10 mensajes)
+        // Agregar historial reciente (últimos 8 mensajes)
         if (historial && historial.length > 0) {
-            const recientes = historial.slice(-10);
+            const recientes = historial.slice(-8);
             recientes.forEach(item => {
                 if (item.message && item.message.trim()) {
                     mensajes.push({
