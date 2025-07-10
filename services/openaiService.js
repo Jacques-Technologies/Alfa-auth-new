@@ -232,8 +232,8 @@ class OpenAIService {
             {
                 type: "function",
                 function: {
-                    name: "generar_tarjeta_empleado",
-                    description: "Genera tarjeta para consultar información completa del empleado incluyendo días de vacaciones disponibles, datos personales, información laboral y perfil del usuario",
+                    name: "consultar_informacion_empleado",
+                    description: "Consulta información completa del empleado incluyendo días de vacaciones disponibles, datos personales, información laboral y perfil del usuario. Usa esta herramienta cuando pregunten sobre datos del empleado, días disponibles, información personal o laboral.",
                     parameters: { type: "object", properties: {} }
                 }
             }
@@ -343,16 +343,6 @@ class OpenAIService {
                         { id: 'fechaNacimiento', type: 'date', label: 'Fecha de Nacimiento', required: true }
                     ],
                     icon: '👶'
-                }
-            },
-            empleado: {
-                informacion: {
-                    title: 'Mi Información',
-                    description: 'Consulta tu información básica de empleado y días de vacaciones disponibles',
-                    method: 'GET',
-                    url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/empleado',
-                    fields: [],
-                    icon: '👤'
                 }
             }
         };
@@ -614,8 +604,8 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             case 'consultar_mis_solicitudes':
                 return await this.consultarMisSolicitudes(context, userId);
 
-            case 'generar_tarjeta_empleado':
-                return this.generarTarjetaEmpleado();
+            case 'consultar_informacion_empleado':
+                return await this.consultarInformacionEmpleado(context, userId);
 
             case 'buscar_documentos':
                 return await this.buscarEnDocumentos(parametros.consulta);
@@ -672,17 +662,91 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
     }
 
     /**
-     * Genera tarjeta para información del empleado
-     * @returns {Object} - Resultado con tarjeta
+     * Consulta información completa del empleado
+     * @param {Object} context - Contexto del bot
+     * @param {string} userId - ID del usuario
+     * @returns {string} - Información del empleado formateada
      */
-    generarTarjetaEmpleado() {
-        const action = this.apiActions.empleado.informacion;
-        const card = this.crearTarjetaAdaptativa(action);
-        
-        return {
-            textContent: `👤 **Mi Información Personal**\n\nConsulta tus datos como empleado y días de vacaciones disponibles:`,
-            card: card
-        };
+    async consultarInformacionEmpleado(context, userId) {
+        try {
+            console.log('👤 Consultando información del empleado...');
+            
+            // Obtener token del usuario autenticado
+            const bot = global.botInstance;
+            let userToken = null;
+            
+            if (bot && typeof bot.getUserOAuthToken === 'function') {
+                userToken = await bot.getUserOAuthToken(context, userId);
+                console.log(`🔑 Token de usuario obtenido: ${userToken ? 'SÍ' : 'NO'}`);
+            } else {
+                console.error('❌ No se pudo obtener instancia del bot o método getUserOAuthToken');
+            }
+            
+            if (!userToken) {
+                return `❌ **Error de autenticación**\n\n` +
+                       `**Problema**: No se pudo obtener token de usuario\n` +
+                       `**Solución**: Intenta hacer logout y login nuevamente`;
+            }
+            
+            const authHeader = `Bearer ${userToken}`;
+            console.log(`📤 Authorization header: ${authHeader.substring(0, 30)}...`);
+            
+            const response = await axios.get(
+                'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/empleado',
+                {
+                    headers: {
+                        'Authorization': authHeader
+                    },
+                    timeout: 10000
+                }
+            );
+            
+            console.log(`✅ Respuesta exitosa de SIRH API (status: ${response.status})`);
+            
+            // Formatear la información para una respuesta amigable
+            const empleadoData = response.data;
+            let infoFormateada = `👤 **Tu Información Personal**\n\n`;
+            
+            // Extraer información relevante
+            if (empleadoData.nombre) {
+                infoFormateada += `**Nombre**: ${empleadoData.nombre}\n`;
+            }
+            if (empleadoData.puesto || empleadoData.cargo) {
+                infoFormateada += `**Puesto**: ${empleadoData.puesto || empleadoData.cargo}\n`;
+            }
+            if (empleadoData.departamento || empleadoData.area) {
+                infoFormateada += `**Departamento**: ${empleadoData.departamento || empleadoData.area}\n`;
+            }
+            if (empleadoData.diasVacacionesDisponibles !== undefined) {
+                infoFormateada += `🏖️ **Días de vacaciones disponibles**: ${empleadoData.diasVacacionesDisponibles}\n`;
+            }
+            if (empleadoData.fechaIngreso) {
+                infoFormateada += `📅 **Fecha de ingreso**: ${empleadoData.fechaIngreso}\n`;
+            }
+            
+            // Si no hay campos específicos, mostrar datos raw formateados
+            if (!empleadoData.nombre && !empleadoData.puesto) {
+                infoFormateada += `**Datos completos**:\n\`\`\`json\n${JSON.stringify(empleadoData, null, 2)}\n\`\`\``;
+            }
+            
+            return infoFormateada;
+            
+        } catch (error) {
+            console.error('❌ Error completo consultando información del empleado:', {
+                message: error.message,
+                status: error.response?.status,
+                statusText: error.response?.statusText,
+                data: error.response?.data
+            });
+            
+            if (error.response?.status === 401) {
+                return `❌ **Error de autenticación (401)**\n\n` +
+                       `**Problema**: Token de usuario inválido o expirado\n` +
+                       `**Solución**: Intenta hacer logout y login nuevamente`;
+            }
+            
+            return `❌ Error al consultar información del empleado: ${error.message}`;
+        }
     }
 
     async consultarMisSolicitudes(context, userId) {
