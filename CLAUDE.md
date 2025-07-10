@@ -32,7 +32,7 @@ The application requires these environment variables:
 - `INDEX_NAME` - Search index name (defaults to 'alfa_bot')
 
 **External API Integration:**
-- `TOKEN_SIRH` - Token for SIRH vacation API
+- `TOKEN_SIRH` - Token for SIRH vacation API (REQUIRED for vacation requests)
 - `TOKEN_BUBBLE` - Token for Bubble apps (employee directory, cafeteria menu)
 
 **Alternative OAuth (optional):**

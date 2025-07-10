@@ -627,20 +627,43 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
 
     async consultarMisSolicitudes() {
         try {
+            const token = process.env.TOKEN_SIRH;
+            console.log('🏖️ Consultando solicitudes de vacaciones...');
+            console.log(`🔑 TOKEN_SIRH disponible: ${token ? 'SÍ' : 'NO'}`);
+            console.log(`🔑 TOKEN_SIRH preview: ${token ? token.substring(0, 20) + '...' : 'N/A'}`);
+            
+            const authHeader = `Bearer ${token || 'TOKEN_NO_CONFIGURADO'}`;
+            console.log(`📤 Authorization header: ${authHeader.substring(0, 30)}...`);
+            
             const response = await axios.get(
                 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/empleado',
                 {
                     headers: {
-                        'Authorization': `Bearer ${process.env.TOKEN_SIRH || 'TOKEN_NO_CONFIGURADO'}`
+                        'Authorization': authHeader
                     },
                     timeout: 10000
                 }
             );
             
+            console.log(`✅ Respuesta exitosa de SIRH API (status: ${response.status})`);
             return `📋 **Mis Solicitudes de Vacaciones**\n\n${JSON.stringify(response.data, null, 2)}`;
             
         } catch (error) {
-            console.error('Error consultando solicitudes:', error.message);
+            console.error('❌ Error completo consultando solicitudes:', {
+                message: error.message,
+                status: error.response?.status,
+                statusText: error.response?.statusText,
+                data: error.response?.data,
+                headers: error.response?.headers
+            });
+            
+            if (error.response?.status === 401) {
+                return `❌ **Error de autenticación (401)**\n\n` +
+                       `**Problema**: Token de SIRH inválido o expirado\n` +
+                       `**Token configurado**: ${process.env.TOKEN_SIRH ? 'SÍ' : 'NO'}\n` +
+                       `**Solución**: Verificar TOKEN_SIRH en variables de entorno`;
+            }
+            
             return `❌ Error al consultar solicitudes: ${error.message}`;
         }
     }
