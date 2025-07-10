@@ -399,17 +399,27 @@ async function handleVacationSimulationResponse(context, response, originalUrl, 
                           lowerResponse.includes('incorrecto') ||
                           lowerResponse.includes('inválido') ||
                           lowerResponse.includes('falta') ||
-                          lowerResponse.includes('requerido');
+                          lowerResponse.includes('requerido') ||
+                          lowerResponse.includes('igual o posterior') ||
+                          lowerResponse.includes('debe coincidir') ||
+                          lowerResponse.includes('formato incorrecto') ||
+                          lowerResponse.includes('no válido') ||
+                          lowerResponse.includes('no permitido') ||
+                          lowerResponse.includes('fecha actual') ||
+                          lowerResponse.includes('fecha de salida') ||
+                          lowerResponse.includes('fecha de regreso');
             
-            // Es exitoso si no es error y contiene información válida
-            isSuccess = !isError && (
-                       lowerResponse.includes('exitoso') || 
-                       lowerResponse.includes('aprobado') ||
-                       lowerResponse.includes('disponible') ||
-                       (lowerResponse.includes('días') && lowerResponse.includes('solicitud')) ||
-                       lowerResponse.includes('vacaciones aprobadas') ||
-                       lowerResponse.includes('solicitud procesada')
-            );
+            // Indicadores específicos de éxito
+            const successKeywords = lowerResponse.includes('exitoso') || 
+                                  lowerResponse.includes('aprobado') ||
+                                  lowerResponse.includes('disponible') ||
+                                  lowerResponse.includes('vacaciones aprobadas') ||
+                                  lowerResponse.includes('solicitud procesada') ||
+                                  lowerResponse.includes('días disponibles') ||
+                                  lowerResponse.includes('saldo suficiente');
+            
+            // Es exitoso SOLO si tiene palabras de éxito explícitas Y no es error
+            isSuccess = !isError && successKeywords;
         } else if (typeof response === 'object') {
             message = response.message || JSON.stringify(response, null, 2);
             isSuccess = response.success === true || 
