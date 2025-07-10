@@ -213,7 +213,12 @@ function processUrlParameters(url, fieldData) {
 
     for (const match of matches) {
         const paramName = match[1];
-        const value = remainingData[paramName];
+        let value = remainingData[paramName];
+
+        // Para vacaciones, si falta simular, usar 'true' por defecto
+        if (paramName === 'simular' && value === undefined && url.includes('/vac/solicitudes/')) {
+            value = 'true';
+        }
 
         if (value !== undefined && value !== '') {
             processedUrl = processedUrl.replace(`{${paramName}}`, encodeURIComponent(value));
@@ -376,9 +381,23 @@ async function handleVacationSimulationResponse(context, response, originalUrl, 
     const { CardFactory } = require('botbuilder');
     
     try {
-        // Mostrar resultado de la simulación
-        const message = response.message || JSON.stringify(response, null, 2);
-        const isSuccess = response.success || (response.resultado && response.resultado.toLowerCase() === 'exitoso');
+        // Analizar respuesta
+        let message = '';
+        let isSuccess = false;
+        
+        if (typeof response === 'string') {
+            message = response;
+            // Buscar indicadores de éxito en el texto
+            isSuccess = response.toLowerCase().includes('exitoso') || 
+                       response.toLowerCase().includes('aprobado') ||
+                       response.toLowerCase().includes('disponible');
+        } else if (typeof response === 'object') {
+            message = response.message || JSON.stringify(response, null, 2);
+            isSuccess = response.success === true || 
+                       response.resultado?.toLowerCase() === 'exitoso' ||
+                       response.status === 'success' ||
+                       response.status === 200;
+        }
         
         if (!isSuccess) {
             await context.sendActivity(`❌ **Simulación rechazada**\n\n${message}`);
