@@ -368,7 +368,7 @@ class OpenAIService {
                 model: "gpt-4-turbo",
                 messages: mensajes,
                 temperature: 0.7,
-                max_tokens: 1500
+                max_tokens: 3000  // Incrementar para permitir más resultados de búsqueda
             };
 
             // Agregar herramientas si no es comando básico
@@ -567,7 +567,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             model: "gpt-4-turbo",
             messages: finalMessages,
             temperature: 0.7,
-            max_tokens: 1500
+            max_tokens: 3000  // Incrementar para permitir más resultados de búsqueda
         });
 
         return {
