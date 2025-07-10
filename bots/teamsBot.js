@@ -96,11 +96,15 @@ class TeamsBot extends DialogBot {
                     await this.handleCardSubmit(context);
                 } else {
                     // Mensajes regulares - verificar autenticación
+                    console.log(`[${userId}] TeamsBot - Verificando autenticación para mensaje regular...`);
                     const isAuthenticated = await this.isUserAuthenticated(userId, context);
+                    console.log(`[${userId}] TeamsBot - Usuario autenticado: ${isAuthenticated}`);
                     
                     if (isAuthenticated) {
+                        console.log(`[${userId}] TeamsBot - Procesando mensaje autenticado`);
                         await this.processAuthenticatedMessage(context, text, userId);
                     } else {
+                        console.log(`[${userId}] TeamsBot - Usuario NO autenticado, mostrando mensaje`);
                         // Para usuarios no autenticados: mostrar mensaje
                         // El diálogo se ejecutará automáticamente desde DialogBot
                         await context.sendActivity(
@@ -279,21 +283,27 @@ class TeamsBot extends DialogBot {
         try {
             // 1. Verificar memoria
             const memoryAuth = this.authenticatedUsers.has(userId);
+            console.log(`[${userId}] isUserAuthenticated - Memoria: ${memoryAuth}`);
             
             // 2. Verificar estado persistente
             const authData = await this.authState.get(context, {});
             const persistentAuth = authData[userId]?.authenticated === true;
+            console.log(`[${userId}] isUserAuthenticated - Persistente: ${persistentAuth}`);
             
             // 3. Sincronizar si hay inconsistencia
             if (memoryAuth && !persistentAuth) {
+                console.log(`[${userId}] isUserAuthenticated - Sincronizando persistente desde memoria`);
                 await this.syncPersistentAuth(userId, context);
                 return true;
             } else if (!memoryAuth && persistentAuth) {
+                console.log(`[${userId}] isUserAuthenticated - Sincronizando memoria desde persistente`);
                 await this.syncMemoryAuth(userId, context, authData[userId]);
                 return true;
             }
             
-            return memoryAuth && persistentAuth;
+            const finalResult = memoryAuth && persistentAuth;
+            console.log(`[${userId}] isUserAuthenticated - Resultado final: ${finalResult}`);
+            return finalResult;
             
         } catch (error) {
             console.error(`[${userId}] Error verificando autenticación:`, error);
