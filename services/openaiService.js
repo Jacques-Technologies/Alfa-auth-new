@@ -237,13 +237,13 @@ class OpenAIService {
                 type: "function",
                 function: {
                     name: "buscar_documentos",
-                    description: "Busca información en documentos corporativos",
+                    description: "HERRAMIENTA PRINCIPAL - Busca información en documentos corporativos oficiales de Alfa. Úsala para: políticas, procedimientos, códigos de conducta, beneficios, prestaciones, reglamentos, normativas, manuales, guías y cualquier información corporativa. SIEMPRE usa esta herramienta antes de responder preguntas sobre la empresa.",
                     parameters: {
                         type: "object",
                         properties: {
                             consulta: {
                                 type: "string",
-                                description: "Texto a buscar en documentos"
+                                description: "Texto a buscar en documentos (ej: 'código vestimenta', 'política vacaciones', 'horario trabajo', 'beneficios', etc.)"
                             }
                         },
                         required: ["consulta"]
@@ -447,25 +447,52 @@ class OpenAIService {
             role: "system",
             content: `Eres un asistente corporativo para Alfa Corporation. Ayudas con:
 
+📚 INFORMACIÓN CORPORATIVA (PRIORIDAD):
+- SIEMPRE busca primero en documentos corporativos antes de responder
+- Usa buscar_documentos para políticas, procedimientos, beneficios, códigos de conducta, etc.
+- Si alguien pregunta sobre cualquier tema corporativo, BUSCA en documentos primero
+- No respondas de memoria, siempre verifica en documentos oficiales
+
 🏖️ VACACIONES:
 - Solicitar vacaciones regulares, por matrimonio o nacimiento
 - Consultar estado de solicitudes
 - Simular disponibilidad de días
 
-📚 INFORMACIÓN:
-- Buscar en documentos corporativos
-- Consultar directorio de empleados
-- Revisar menú del comedor
+👥 DIRECTORIO Y SERVICIOS:
+- Buscar empleados en directorio
+- Consultar menú del comedor
 
-INSTRUCCIONES:
-- Responde en español de manera profesional
-- Usa herramientas apropiadas según la consulta
-- Para vacaciones: determina tipo específico antes de generar tarjetas
-- Para búsquedas: usa herramientas de búsqueda disponibles
+REGLAS IMPORTANTES:
+1. Para CUALQUIER pregunta sobre políticas, procedimientos o información corporativa → USA buscar_documentos
+2. Ejemplos donde DEBES buscar en documentos:
+   - Código de vestimenta
+   - Políticas de trabajo remoto
+   - Beneficios y prestaciones
+   - Procedimientos administrativos
+   - Reglamentos internos
+   - Horarios de trabajo
+   - Políticas de vacaciones
+   - Cualquier normativa corporativa
+3. Solo responde sin buscar si es un saludo o pregunta personal
+4. Si no encuentras información en documentos, indícalo claramente
 
 Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yyyy')}`
         }];
 
+        // Agregar ejemplo de uso correcto si el historial está vacío
+        if (!historial || historial.length === 0) {
+            mensajes.push(
+                { role: "user", content: "¿Cuál es el código de vestimenta?" },
+                { role: "assistant", content: "Voy a buscar la información sobre el código de vestimenta en los documentos oficiales.", tool_calls: [{
+                    id: "example1",
+                    type: "function",
+                    function: { name: "buscar_documentos", arguments: JSON.stringify({ consulta: "código de vestimenta" }) }
+                }]},
+                { role: "tool", tool_call_id: "example1", content: "IT-AC-RH-01 Código de Vestimenta: Business casual de lunes a jueves, casual los viernes..." },
+                { role: "assistant", content: "Según el documento oficial IT-AC-RH-01, el código de vestimenta en Alfa es:\n\n📋 **Lunes a Jueves**: Business casual\n👔 **Viernes**: Casual\n\nEl documento completo especifica los detalles sobre qué prendas son apropiadas para cada día." }
+            );
+        }
+        
         // Agregar historial reciente (últimos 10 mensajes)
         if (historial && historial.length > 0) {
             const recientes = historial.slice(-10);
