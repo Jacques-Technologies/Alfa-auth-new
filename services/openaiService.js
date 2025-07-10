@@ -228,6 +228,14 @@ class OpenAIService {
                     description: "Consulta las solicitudes de vacaciones del usuario, así como días disponibles de vacaciones adicionales",
                     parameters: { type: "object", properties: {} }
                 }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "generar_tarjeta_empleado",
+                    description: "Genera tarjeta para consultar información completa del empleado incluyendo días de vacaciones disponibles, datos personales, información laboral y perfil del usuario",
+                    parameters: { type: "object", properties: {} }
+                }
             }
         ];
 
@@ -335,6 +343,16 @@ class OpenAIService {
                         { id: 'fechaNacimiento', type: 'date', label: 'Fecha de Nacimiento', required: true }
                     ],
                     icon: '👶'
+                }
+            },
+            empleado: {
+                informacion: {
+                    title: 'Mi Información',
+                    description: 'Consulta tu información básica de empleado y días de vacaciones disponibles',
+                    method: 'GET',
+                    url: 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/empleado',
+                    fields: [],
+                    icon: '👤'
                 }
             }
         };
@@ -596,6 +614,9 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             case 'consultar_mis_solicitudes':
                 return await this.consultarMisSolicitudes(context, userId);
 
+            case 'generar_tarjeta_empleado':
+                return this.generarTarjetaEmpleado();
+
             case 'buscar_documentos':
                 return await this.buscarEnDocumentos(parametros.consulta);
 
@@ -646,6 +667,20 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         
         return {
             textContent: `👶 **Vacaciones por Nacimiento**\n\nSolicita tus días de paternidad/maternidad:`,
+            card: card
+        };
+    }
+
+    /**
+     * Genera tarjeta para información del empleado
+     * @returns {Object} - Resultado con tarjeta
+     */
+    generarTarjetaEmpleado() {
+        const action = this.apiActions.empleado.informacion;
+        const card = this.crearTarjetaAdaptativa(action);
+        
+        return {
+            textContent: `👤 **Mi Información Personal**\n\nConsulta tus datos como empleado y días de vacaciones disponibles:`,
             card: card
         };
     }
