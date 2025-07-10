@@ -104,13 +104,9 @@ class TeamsBot extends DialogBot {
                         console.log(`[${userId}] TeamsBot - Procesando mensaje autenticado`);
                         await this.processAuthenticatedMessage(context, text, userId);
                     } else {
-                        console.log(`[${userId}] TeamsBot - Usuario NO autenticado, mostrando mensaje`);
-                        // Para usuarios no autenticados: mostrar mensaje
-                        // El diálogo se ejecutará automáticamente desde DialogBot
-                        await context.sendActivity(
-                            '🔒 **Necesitas iniciar sesión**\n\n' +
-                            'Escribe `login` para autenticarte y acceder a las funciones del bot.'
-                        );
+                        console.log(`[${userId}] TeamsBot - Usuario NO autenticado, ejecutando diálogo`);
+                        // Para usuarios no autenticados: ejecutar diálogo directamente
+                        await this.dialog.run(context, this.dialogState);
                     }
                 }
             } finally {

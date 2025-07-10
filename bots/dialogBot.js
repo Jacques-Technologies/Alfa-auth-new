@@ -49,26 +49,10 @@ class DialogBot extends TeamsActivityHandler {
                 return await next();
             }
 
-            // Solo ejecutar el diálogo si el usuario no está autenticado
-            const bot = context.turnState.get('bot');
-            const userId = context.activity.from.id;
-            
-            console.log(`[${userId}] DialogBot.handleMessage - Verificando autenticación...`);
-            
-            if (bot && typeof bot.isUserAuthenticated === 'function') {
-                const isAuthenticated = await bot.isUserAuthenticated(userId, context);
-                console.log(`[${userId}] DialogBot - Usuario autenticado: ${isAuthenticated}`);
-                
-                if (!isAuthenticated) {
-                    console.log(`[${userId}] DialogBot - Ejecutando diálogo para usuario NO autenticado`);
-                    await this.dialog.run(context, this.dialogState);
-                } else {
-                    console.log(`[${userId}] DialogBot - Saltando diálogo para usuario autenticado`);
-                }
-            } else {
-                console.log(`[${userId}] DialogBot - No se pudo verificar autenticación, ejecutando diálogo como fallback`);
-                await this.dialog.run(context, this.dialogState);
-            }
+            // DialogBot ya no maneja autenticación, eso lo hace TeamsBot
+            // Solo ejecutamos diálogo cuando TeamsBot explícitamente lo solicite
+            console.log(`[${context.activity.from.id}] DialogBot.handleMessage - Delegando manejo a TeamsBot`);
+            // El diálogo se ejecutará desde TeamsBot cuando sea necesario
 
         } catch (error) {
             console.error('DialogBot: Error en handleMessage:', error.message);
