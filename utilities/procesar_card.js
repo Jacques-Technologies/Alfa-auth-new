@@ -387,14 +387,29 @@ async function handleVacationSimulationResponse(context, response, originalUrl, 
         
         if (typeof response === 'string') {
             message = response;
-            // Buscar indicadores de éxito o información válida
+            // Buscar indicadores de error específicos
             const lowerResponse = response.toLowerCase();
-            isSuccess = lowerResponse.includes('exitoso') || 
+            const isError = lowerResponse.includes('error') || 
+                          lowerResponse.includes('rechazad') ||
+                          lowerResponse.includes('negad') ||
+                          lowerResponse.includes('tiene que ser') ||
+                          lowerResponse.includes('debe ser') ||
+                          lowerResponse.includes('no puede') ||
+                          lowerResponse.includes('no es válid') ||
+                          lowerResponse.includes('incorrecto') ||
+                          lowerResponse.includes('inválido') ||
+                          lowerResponse.includes('falta') ||
+                          lowerResponse.includes('requerido');
+            
+            // Es exitoso si no es error y contiene información válida
+            isSuccess = !isError && (
+                       lowerResponse.includes('exitoso') || 
                        lowerResponse.includes('aprobado') ||
                        lowerResponse.includes('disponible') ||
-                       lowerResponse.includes('días') ||
-                       lowerResponse.includes('solicitud de vacaciones') ||
-                       (!lowerResponse.includes('error') && !lowerResponse.includes('rechazad') && !lowerResponse.includes('negad'));
+                       (lowerResponse.includes('días') && lowerResponse.includes('solicitud')) ||
+                       lowerResponse.includes('vacaciones aprobadas') ||
+                       lowerResponse.includes('solicitud procesada')
+            );
         } else if (typeof response === 'object') {
             message = response.message || JSON.stringify(response, null, 2);
             isSuccess = response.success === true || 
