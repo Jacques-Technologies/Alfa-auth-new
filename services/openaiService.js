@@ -708,26 +708,67 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             const empleadoData = response.data;
             let infoFormateada = `👤 **Tu Información Personal**\n\n`;
             
-            // Extraer información relevante
-            if (empleadoData.nombre) {
-                infoFormateada += `**Nombre**: ${empleadoData.nombre}\n`;
+            // Extraer información relevante usando los nombres correctos de la API
+            if (empleadoData.nombreCompleto) {
+                infoFormateada += `**Nombre**: ${empleadoData.nombreCompleto}\n`;
             }
-            if (empleadoData.puesto || empleadoData.cargo) {
-                infoFormateada += `**Puesto**: ${empleadoData.puesto || empleadoData.cargo}\n`;
+            if (empleadoData.puesto) {
+                infoFormateada += `**Puesto**: ${empleadoData.puesto}\n`;
             }
-            if (empleadoData.departamento || empleadoData.area) {
-                infoFormateada += `**Departamento**: ${empleadoData.departamento || empleadoData.area}\n`;
+            if (empleadoData.numeroSocio) {
+                infoFormateada += `**Número de empleado**: ${empleadoData.numeroSocio}\n`;
             }
-            if (empleadoData.diasVacacionesDisponibles !== undefined) {
-                infoFormateada += `🏖️ **Días de vacaciones disponibles**: ${empleadoData.diasVacacionesDisponibles}\n`;
+            if (empleadoData.estatus) {
+                infoFormateada += `**Estatus**: ${empleadoData.estatus}\n`;
             }
-            if (empleadoData.fechaIngreso) {
-                infoFormateada += `📅 **Fecha de ingreso**: ${empleadoData.fechaIngreso}\n`;
+            if (empleadoData.mailAlfa) {
+                infoFormateada += `**Email corporativo**: ${empleadoData.mailAlfa}\n`;
             }
             
-            // Si no hay campos específicos, mostrar datos raw formateados
-            if (!empleadoData.nombre && !empleadoData.puesto) {
-                infoFormateada += `**Datos completos**:\n\`\`\`json\n${JSON.stringify(empleadoData, null, 2)}\n\`\`\``;
+            // INFORMACIÓN DE VACACIONES - Lo más importante
+            infoFormateada += `\n🏖️ **INFORMACIÓN DE VACACIONES**\n`;
+            if (empleadoData.diasDerechoVacaciones !== undefined) {
+                infoFormateada += `• **Días de derecho**: ${empleadoData.diasDerechoVacaciones}\n`;
+            }
+            if (empleadoData.diasVacacionesSolicitados !== undefined) {
+                infoFormateada += `• **Días solicitados**: ${empleadoData.diasVacacionesSolicitados}\n`;
+            }
+            if (empleadoData.diasVacacionesRestantes !== undefined) {
+                infoFormateada += `• **Días restantes**: ${empleadoData.diasVacacionesRestantes}\n`;
+            }
+            if (empleadoData.diasDescanso !== undefined) {
+                infoFormateada += `• **Días de descanso disponibles**: ${empleadoData.diasDescanso}\n`;
+            }
+            if (empleadoData.diasDescansoRestantes !== undefined) {
+                infoFormateada += `• **Días de descanso restantes**: ${empleadoData.diasDescansoRestantes}\n`;
+            }
+            
+            // FECHAS IMPORTANTES
+            if (empleadoData.fechaInicio || empleadoData.fechaFin || empleadoData.fechaAntiguedadReconocida) {
+                infoFormateada += `\n📅 **FECHAS IMPORTANTES**\n`;
+                if (empleadoData.fechaAntiguedadReconocida) {
+                    const fecha = new Date(empleadoData.fechaAntiguedadReconocida).toLocaleDateString('es-MX');
+                    infoFormateada += `• **Antigüedad reconocida**: ${fecha}\n`;
+                }
+                if (empleadoData.fechaInicio) {
+                    const fecha = new Date(empleadoData.fechaInicio).toLocaleDateString('es-MX');
+                    infoFormateada += `• **Fecha de inicio actual**: ${fecha}\n`;
+                }
+                if (empleadoData.fechaFin) {
+                    const fecha = new Date(empleadoData.fechaFin).toLocaleDateString('es-MX');
+                    infoFormateada += `• **Fecha de fin**: ${fecha}\n`;
+                }
+            }
+            
+            // RESUMEN DE SOLICITUDES RECIENTES
+            if (empleadoData.solicitudesHistorial && empleadoData.solicitudesHistorial.length > 0) {
+                const solicitudesRecientes = empleadoData.solicitudesHistorial.slice(-3); // Últimas 3
+                infoFormateada += `\n📋 **SOLICITUDES RECIENTES**\n`;
+                solicitudesRecientes.forEach(solicitud => {
+                    const fechaSalida = new Date(solicitud.fechaSalida).toLocaleDateString('es-MX');
+                    const fechaRegreso = new Date(solicitud.fechaRegreso).toLocaleDateString('es-MX');
+                    infoFormateada += `• **${solicitud.tipoSolicitud}** (${solicitud.cantidadDias} días): ${fechaSalida} - ${fechaRegreso} [${solicitud.estatus}]\n`;
+                });
             }
             
             console.log(`📤 Información formateada que se retorna:`, infoFormateada);
