@@ -387,16 +387,21 @@ async function handleVacationSimulationResponse(context, response, originalUrl, 
         
         if (typeof response === 'string') {
             message = response;
-            // Buscar indicadores de éxito en el texto
-            isSuccess = response.toLowerCase().includes('exitoso') || 
-                       response.toLowerCase().includes('aprobado') ||
-                       response.toLowerCase().includes('disponible');
+            // Buscar indicadores de éxito o información válida
+            const lowerResponse = response.toLowerCase();
+            isSuccess = lowerResponse.includes('exitoso') || 
+                       lowerResponse.includes('aprobado') ||
+                       lowerResponse.includes('disponible') ||
+                       lowerResponse.includes('días') ||
+                       lowerResponse.includes('solicitud de vacaciones') ||
+                       (!lowerResponse.includes('error') && !lowerResponse.includes('rechazad') && !lowerResponse.includes('negad'));
         } else if (typeof response === 'object') {
             message = response.message || JSON.stringify(response, null, 2);
             isSuccess = response.success === true || 
                        response.resultado?.toLowerCase() === 'exitoso' ||
                        response.status === 'success' ||
-                       response.status === 200;
+                       response.status === 200 ||
+                       (response.message && !response.message.toLowerCase().includes('error'));
         }
         
         if (!isSuccess) {
