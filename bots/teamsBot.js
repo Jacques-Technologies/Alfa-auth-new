@@ -101,6 +101,8 @@ class TeamsBot extends DialogBot {
                     if (isAuthenticated) {
                         await this.processAuthenticatedMessage(context, text, userId);
                     } else {
+                        // Para usuarios no autenticados: mostrar mensaje
+                        // El diálogo se ejecutará automáticamente desde DialogBot
                         await context.sendActivity(
                             '🔒 **Necesitas iniciar sesión**\n\n' +
                             'Escribe `login` para autenticarte y acceder a las funciones del bot.'

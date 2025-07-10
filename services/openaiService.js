@@ -667,12 +667,11 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 fields: 'Embedding'
             };
             
-            // Usar búsqueda vectorial pura con filtro de carpetas (como el código funcional)
-            const searchResults = await this.searchClient.search(undefined, {
+            // Usar búsqueda híbrida (texto + vector) ya que los filtros de carpetas están desactualizados
+            const searchResults = await this.searchClient.search(consulta, {
                 vectorQueries: [vectorQuery],
                 select: ['Chunk', 'FileName', 'Adicional'],
-                top: 7,
-                filter: "Folder eq '1727468181184x887443586264191900' or Folder eq '1721838331185x391888654169602750' or Folder eq '1721838293918x578567098933541200' or Folder eq '1721838273084x997249294344777400' or Folder eq '1724297146467x528248112589696500' or Folder eq '1724297132046x157473295543779870' or Folder eq '1724297122954x246675696308903400' or Folder eq '1724297114861x824556494556945700' or Folder eq '1724297105904x395803296537081500' or Folder eq '1724297093236x840642798817826400' or Folder eq '1727468160291x847487420923683800' or Folder eq '1739992558603x917158177162499100' or Folder eq '1739218698126x647518027570958500'"
+                top: 7
             });
 
             console.log('🔍 Procesando resultados...');
