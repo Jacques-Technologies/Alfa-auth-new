@@ -702,6 +702,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             );
             
             console.log(`✅ Respuesta exitosa de SIRH API (status: ${response.status})`);
+            console.log(`📊 Datos del empleado recibidos:`, JSON.stringify(response.data, null, 2));
             
             // Formatear la información para una respuesta amigable
             const empleadoData = response.data;
@@ -729,6 +730,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 infoFormateada += `**Datos completos**:\n\`\`\`json\n${JSON.stringify(empleadoData, null, 2)}\n\`\`\``;
             }
             
+            console.log(`📤 Información formateada que se retorna:`, infoFormateada);
             return infoFormateada;
             
         } catch (error) {
