@@ -163,17 +163,37 @@ class TeamsBot extends DialogBot {
      */
     async handleLogout(context, userId) {
         try {
-            // Limpiar estado de memoria
-            this.authenticatedUsers.delete(userId);
+            console.log(`[${userId}] Iniciando logout completo...`);
             
-            // Limpiar estado persistente
+            // 1. Limpiar estado de memoria
+            this.authenticatedUsers.delete(userId);
+            console.log(`[${userId}] Estado de memoria limpiado`);
+            
+            // 2. Limpiar estado persistente
             const authData = await this.authState.get(context, {});
             delete authData[userId];
             await this.authState.set(context, authData);
             await this.userState.saveChanges(context);
+            console.log(`[${userId}] Estado persistente limpiado`);
+            
+            // 3. NUEVO: Limpiar token del UserTokenClient (Bot Framework)
+            try {
+                const userTokenClient = context.turnState.get(context.adapter.UserTokenClientKey);
+                const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
+                
+                if (userTokenClient && connectionName) {
+                    await userTokenClient.signOutUser(userId, connectionName, context.activity.channelId);
+                    console.log(`[${userId}] Token OAuth limpiado del UserTokenClient`);
+                } else {
+                    console.warn(`[${userId}] UserTokenClient o connectionName no disponible para logout`);
+                }
+            } catch (tokenError) {
+                console.error(`[${userId}] Error limpiando token OAuth:`, tokenError.message);
+                // Continuar con el logout aunque falle la limpieza del token
+            }
             
             await context.sendActivity('✅ **Sesión cerrada exitosamente**');
-            console.log(`[${userId}] Logout completado`);
+            console.log(`[${userId}] Logout completado exitosamente`);
             
         } catch (error) {
             console.error(`[${userId}] Error en logout:`, error);
