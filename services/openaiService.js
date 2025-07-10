@@ -651,37 +651,50 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 return "El servicio de búsqueda no está disponible.";
             }
 
+            console.log(`🔍 Buscando: "${consulta}"`);
+
             const embedding = await this.openai.embeddings.create({
                 model: 'text-embedding-3-large',
                 input: consulta,
                 dimensions: 1024
             });
             
+            console.log(`✅ Embedding creado con ${embedding.data[0].embedding.length} dimensiones`);
+            
             const vectorQuery = {
                 vector: embedding.data[0].embedding,
-                kNearestNeighbors: 3,
+                kNearestNeighbors: 5,  // Aumentar a 5 para más resultados
                 fields: 'Embedding'
             };
             
             const searchResults = await this.searchClient.search(undefined, {
                 vectorQueries: [vectorQuery],
                 select: ['Chunk', 'FileName'],
-                top: 3
+                top: 5  // Aumentar a 5
             });
 
+            console.log('🔍 Procesando resultados...');
             const resultados = [];
             for await (const result of searchResults.results) {
                 const doc = result.document;
-                resultados.push(`**${doc.FileName}**: ${doc.Chunk}`);
+                console.log(`📄 Encontrado: ${doc.FileName} (score: ${result.score})`);
+                
+                // Limitar chunk a 300 caracteres para legibilidad
+                const chunk = doc.Chunk?.substring(0, 300) + (doc.Chunk?.length > 300 ? '...' : '');
+                resultados.push(`**${doc.FileName}** (Score: ${result.score?.toFixed(2) || 'N/A'})\n${chunk}`);
+                
                 if (resultados.length >= 3) break;
             }
             
+            console.log(`📊 Total resultados encontrados: ${resultados.length}`);
+            
             return resultados.length > 0 ? 
-                `📚 **Resultados encontrados:**\n\n${resultados.join('\n\n')}` :
-                "No se encontraron documentos relevantes.";
+                `📚 **Resultados encontrados:**\n\n${resultados.join('\n\n---\n\n')}` :
+                "No se encontraron documentos relevantes para tu consulta.";
                 
         } catch (error) {
             console.error('Error en búsqueda:', error.message);
+            console.error('Stack trace:', error.stack);
             return `Error en búsqueda: ${error.message}`;
         }
     }
