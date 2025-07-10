@@ -1,4 +1,4 @@
-// openaiService.js - Versión optimizada y confiable
+// openaiService.js - Versión corregida con mejor diagnóstico y manejo de errores
 
 const OpenAI = require('openai');
 const { DateTime } = require('luxon');
@@ -8,42 +8,142 @@ const { CardFactory } = require('botbuilder');
 require('dotenv').config();
 
 /**
- * Servicio OpenAI optimizado con herramientas esenciales
+ * Servicio OpenAI corregido con mejor manejo de errores
  */
 class OpenAIService {
     constructor() {
+        this.initialized = false;
+        this.initializationError = null;
+        
+        console.log('🚀 Inicializando OpenAI Service...');
+        this.diagnoseConfiguration();
         this.initializeOpenAI();
         this.initializeAzureSearch();
         this.tools = this.defineTools();
         this.apiActions = this.defineApiActions();
         
-        console.log('OpenAIService inicializado correctamente');
+        console.log(`✅ OpenAI Service inicializado - Disponible: ${this.openaiAvailable}`);
     }
 
     /**
-     * Inicializa cliente OpenAI
+     * Diagnostica la configuración antes de inicializar
+     */
+    diagnoseConfiguration() {
+        console.log('🔍 Diagnosticando configuración...');
+        
+        // Verificar variables de entorno críticas
+        const requiredEnvVars = {
+            'OPENAI_API_KEY': process.env.OPENAI_API_KEY,
+            'SERVICE_ENDPOINT': process.env.SERVICE_ENDPOINT,
+            'API_KEY': process.env.API_KEY,
+            'INDEX_NAME': process.env.INDEX_NAME
+        };
+
+        console.log('📊 Estado de variables de entorno:');
+        for (const [key, value] of Object.entries(requiredEnvVars)) {
+            const status = value ? '✅ Configurada' : '❌ Faltante';
+            const preview = value ? `(${value.substring(0, 10)}...)` : '(no configurada)';
+            console.log(`   ${key}: ${status} ${preview}`);
+        }
+
+        // Verificar archivo .env
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const envPath = path.join(process.cwd(), '.env');
+            
+            if (fs.existsSync(envPath)) {
+                console.log('✅ Archivo .env encontrado');
+                const envContent = fs.readFileSync(envPath, 'utf8');
+                const hasOpenAIKey = envContent.includes('OPENAI_API_KEY');
+                console.log(`   OPENAI_API_KEY en .env: ${hasOpenAIKey ? '✅ Presente' : '❌ Ausente'}`);
+            } else {
+                console.log('⚠️ Archivo .env no encontrado en:', envPath);
+            }
+        } catch (error) {
+            console.log('⚠️ Error verificando archivo .env:', error.message);
+        }
+    }
+
+    /**
+     * Inicializa cliente OpenAI con mejor manejo de errores
      */
     initializeOpenAI() {
         try {
             const apiKey = process.env.OPENAI_API_KEY;
+            
             if (!apiKey) {
-                console.warn('OpenAI API key no configurada');
+                this.initializationError = 'OPENAI_API_KEY no está configurada en las variables de entorno';
+                console.error('❌ OpenAI Error:', this.initializationError);
+                console.log('💡 Solución: Agrega OPENAI_API_KEY=tu_api_key_aqui en tu archivo .env');
+                this.openaiAvailable = false;
+                return;
+            }
+
+            if (apiKey.length < 20) {
+                this.initializationError = 'OPENAI_API_KEY parece ser inválida (muy corta)';
+                console.error('❌ OpenAI Error:', this.initializationError);
                 this.openaiAvailable = false;
                 return;
             }
             
-            this.openai = new OpenAI({ apiKey });
+            console.log('🔑 Inicializando cliente OpenAI...');
+            this.openai = new OpenAI({ 
+                apiKey: apiKey,
+                timeout: 30000, // 30 segundos timeout
+                maxRetries: 2
+            });
+            
             this.openaiAvailable = true;
-            console.log('Cliente OpenAI inicializado');
+            this.initialized = true;
+            
+            console.log('✅ Cliente OpenAI inicializado correctamente');
+            console.log(`   API Key: ${apiKey.substring(0, 7)}...${apiKey.substring(apiKey.length - 4)}`);
+            
+            // Hacer una prueba rápida
+            this.testOpenAIConnection();
             
         } catch (error) {
-            console.error('Error inicializando OpenAI:', error.message);
+            this.initializationError = `Error inicializando OpenAI: ${error.message}`;
+            console.error('❌ Error inicializando OpenAI:', error);
             this.openaiAvailable = false;
         }
     }
 
     /**
-     * Inicializa Azure Search
+     * Prueba la conexión con OpenAI
+     */
+    async testOpenAIConnection() {
+        try {
+            console.log('🧪 Probando conexión con OpenAI...');
+            
+            const testResponse = await this.openai.chat.completions.create({
+                model: "gpt-3.5-turbo",
+                messages: [{ role: "user", content: "Test" }],
+                max_tokens: 5
+            });
+            
+            if (testResponse && testResponse.choices && testResponse.choices[0]) {
+                console.log('✅ Prueba de OpenAI exitosa');
+                this.connectionTested = true;
+            }
+            
+        } catch (error) {
+            console.warn('⚠️ Prueba de OpenAI falló (pero continuando):', error.message);
+            
+            // Si es error de cuota o rate limit, aún marcar como disponible
+            if (error.code === 'insufficient_quota' || error.code === 'rate_limit_exceeded') {
+                console.log('💡 OpenAI está configurado correctamente, solo hay limitaciones de uso');
+                this.openaiAvailable = true;
+            } else {
+                this.openaiAvailable = false;
+                this.initializationError = `Falla en prueba de conexión: ${error.message}`;
+            }
+        }
+    }
+
+    /**
+     * Inicializa Azure Search con mejor logging
      */
     initializeAzureSearch() {
         try {
@@ -52,27 +152,30 @@ class OpenAIService {
             const indexName = process.env.INDEX_NAME || 'alfa_bot';
             
             if (!serviceEndpoint || !apiKey) {
-                console.warn('Azure Search no configurado');
+                console.log('⚠️ Azure Search no configurado completamente');
+                console.log(`   SERVICE_ENDPOINT: ${serviceEndpoint ? '✅' : '❌'}`);
+                console.log(`   API_KEY: ${apiKey ? '✅' : '❌'}`);
                 this.searchAvailable = false;
                 return;
             }
             
+            console.log('🔍 Inicializando Azure Search...');
             this.searchClient = new SearchClient(
                 serviceEndpoint,
                 indexName,
                 new AzureKeyCredential(apiKey)
             );
             this.searchAvailable = true;
-            console.log('Cliente Azure Search inicializado');
+            console.log('✅ Cliente Azure Search inicializado');
             
         } catch (error) {
-            console.error('Error inicializando Azure Search:', error.message);
+            console.error('❌ Error inicializando Azure Search:', error.message);
             this.searchAvailable = false;
         }
     }
 
     /**
-     * Define herramientas disponibles (simplificadas)
+     * Define herramientas disponibles (igual que antes)
      */
     defineTools() {
         const tools = [
@@ -191,7 +294,7 @@ class OpenAIService {
     }
 
     /**
-     * Define acciones de API para tarjetas
+     * Define acciones de API para tarjetas (igual que antes)
      */
     defineApiActions() {
         return {
@@ -238,17 +341,26 @@ class OpenAIService {
     }
 
     /**
-     * Procesa mensaje con OpenAI
+     * Procesa mensaje con OpenAI - VERSIÓN CORREGIDA
      */
     async procesarMensaje(mensaje, historial = []) {
         try {
+            // Verificar disponibilidad con mejor diagnóstico
             if (!this.openaiAvailable) {
-                return {
-                    type: 'text',
-                    content: 'El servicio de OpenAI no está disponible actualmente.'
-                };
+                return this.createUnavailableResponse();
             }
 
+            if (!this.initialized) {
+                console.warn('OpenAI no inicializado, reintentando...');
+                this.initializeOpenAI();
+                
+                if (!this.openaiAvailable) {
+                    return this.createUnavailableResponse();
+                }
+            }
+
+            console.log('📝 Procesando mensaje con OpenAI...');
+            
             const mensajes = this.formatearHistorial(historial);
             mensajes.push({ role: "user", content: mensaje });
 
@@ -265,23 +377,58 @@ class OpenAIService {
                 requestConfig.tool_choice = "auto";
             }
 
+            console.log('🤖 Enviando request a OpenAI...');
             const response = await this.openai.chat.completions.create(requestConfig);
+            
+            if (!response || !response.choices || response.choices.length === 0) {
+                throw new Error('Respuesta vacía de OpenAI');
+            }
+            
             const messageResponse = response.choices[0].message;
 
             // Procesar llamadas a herramientas
             if (messageResponse.tool_calls) {
+                console.log('🔧 Procesando herramientas...');
                 return await this.procesarHerramientas(messageResponse, mensajes);
             }
 
+            console.log('✅ Respuesta de OpenAI recibida exitosamente');
             return {
                 type: 'text',
-                content: messageResponse.content
+                content: messageResponse.content || 'Respuesta vacía de OpenAI'
             };
 
         } catch (error) {
-            console.error('Error en OpenAI:', error.message);
+            console.error('❌ Error en procesarMensaje:', error);
             return this.manejarErrorOpenAI(error);
         }
+    }
+
+    /**
+     * Crea respuesta cuando OpenAI no está disponible
+     */
+    createUnavailableResponse() {
+        let message = '🚫 **El servicio de OpenAI no está disponible actualmente.**\n\n';
+        
+        if (this.initializationError) {
+            message += `**Problema detectado**: ${this.initializationError}\n\n`;
+        }
+        
+        message += '**Posibles soluciones:**\n';
+        message += '• Verificar que OPENAI_API_KEY esté configurada\n';
+        message += '• Verificar que el archivo .env existe y tiene la configuración correcta\n';
+        message += '• Verificar que la API key de OpenAI sea válida\n';
+        message += '• Contactar al administrador del sistema\n\n';
+        
+        message += '**Funciones disponibles sin IA:**\n';
+        message += '• Escribir `login` para autenticarse\n';
+        message += '• Escribir `logout` para cerrar sesión\n';
+        message += '• Las tarjetas de solicitud seguirán funcionando\n';
+
+        return {
+            type: 'text',
+            content: message
+        };
     }
 
     /**
@@ -336,10 +483,12 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
     }
 
     /**
-     * Procesa llamadas a herramientas
+     * Procesa llamadas a herramientas (igual que antes pero con mejor logging)
      */
     async procesarHerramientas(messageResponse, mensajes) {
         const resultados = [];
+
+        console.log(`🔧 Procesando ${messageResponse.tool_calls.length} herramienta(s)...`);
 
         for (const call of messageResponse.tool_calls) {
             const { function: fnCall, id } = call;
@@ -347,11 +496,12 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             
             try {
                 const parametros = JSON.parse(args);
-                console.log(`Ejecutando herramienta: ${name}`, parametros);
+                console.log(`🛠️ Ejecutando herramienta: ${name}`, parametros);
                 
                 const resultado = await this.ejecutarHerramienta(name, parametros);
                 
                 if (resultado && resultado.card) {
+                    console.log('🃏 Retornando respuesta con tarjeta');
                     return {
                         type: 'card',
                         content: resultado.textContent || "Aquí tienes la acción solicitada:",
@@ -366,7 +516,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 });
                 
             } catch (error) {
-                console.error(`Error ejecutando herramienta ${name}:`, error);
+                console.error(`❌ Error ejecutando herramienta ${name}:`, error);
                 resultados.push({
                     tool_call_id: id,
                     content: `Error: ${error.message}`
@@ -375,6 +525,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         }
 
         // Obtener respuesta final del agente
+        console.log('🤖 Obteniendo respuesta final de OpenAI...');
         const finalMessages = [
             ...mensajes,
             messageResponse,
@@ -394,12 +545,12 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
 
         return {
             type: 'text',
-            content: finalResponse.choices[0].message.content
+            content: finalResponse.choices[0].message.content || 'Respuesta final vacía'
         };
     }
 
     /**
-     * Ejecuta herramienta específica
+     * Ejecuta herramienta específica (igual que antes)
      */
     async ejecutarHerramienta(nombre, parametros) {
         switch (nombre) {
@@ -433,12 +584,11 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
     }
 
     /**
-     * Genera tarjeta de vacaciones
+     * Métodos para generar tarjetas (iguales que antes)
      */
     generarTarjetaVacaciones(tipo) {
         const action = this.apiActions.vacaciones.solicitar;
         
-        // Modificar campos según el tipo
         if (tipo === 'simular') {
             action.fields = action.fields.map(field => 
                 field.id === 'simular' ? { ...field, value: 'true' } : field
@@ -455,9 +605,6 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         };
     }
 
-    /**
-     * Genera tarjeta de matrimonio
-     */
     generarTarjetaMatrimonio() {
         const action = this.apiActions.matrimonio.solicitar;
         const card = this.crearTarjetaAdaptativa(action);
@@ -468,9 +615,6 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         };
     }
 
-    /**
-     * Genera tarjeta de nacimiento
-     */
     generarTarjetaNacimiento() {
         const action = this.apiActions.nacimiento.solicitar;
         const card = this.crearTarjetaAdaptativa(action);
@@ -481,9 +625,6 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         };
     }
 
-    /**
-     * Consulta solicitudes del usuario
-     */
     async consultarMisSolicitudes() {
         try {
             const response = await axios.get(
@@ -504,9 +645,6 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         }
     }
 
-    /**
-     * Busca en documentos usando Azure Search
-     */
     async buscarEnDocumentos(consulta) {
         try {
             if (!this.searchAvailable) {
@@ -548,9 +686,6 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         }
     }
 
-    /**
-     * Consulta menú del comedor
-     */
     async consultarMenuComedor(dia) {
         try {
             if (!process.env.TOKEN_BUBBLE) {
@@ -574,9 +709,6 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         }
     }
 
-    /**
-     * Busca empleado en directorio
-     */
     async buscarEmpleado(nombre, apellido = '') {
         try {
             if (!process.env.TOKEN_BUBBLE) {
@@ -601,7 +733,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
     }
 
     /**
-     * Crea tarjeta adaptativa
+     * Crea tarjeta adaptativa (igual que antes)
      */
     crearTarjetaAdaptativa(action) {
         const bodyElements = [
@@ -621,7 +753,6 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             }
         ];
 
-        // Agregar campos
         if (action.fields) {
             action.fields.forEach(field => {
                 bodyElements.push({
@@ -655,9 +786,6 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         return CardFactory.adaptiveCard(card);
     }
 
-    /**
-     * Crea elemento de input
-     */
     crearElementoInput(field) {
         const baseInput = {
             id: field.id,
@@ -690,25 +818,87 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
     }
 
     /**
-     * Maneja errores de OpenAI
+     * Maneja errores de OpenAI con mejor información
      */
     manejarErrorOpenAI(error) {
+        console.error('🚨 Error detallado de OpenAI:', {
+            message: error.message,
+            code: error.code,
+            type: error.type,
+            status: error.status
+        });
+
+        let message = '❌ **Error procesando con OpenAI**\n\n';
+
         if (error.code === 'rate_limit_exceeded') {
-            return {
-                type: 'text',
-                content: 'He alcanzado el límite de consultas. Espera un momento e intenta de nuevo.'
-            };
+            message += '**Problema**: Límite de consultas excedido\n';
+            message += '**Solución**: Espera un momento e intenta de nuevo\n';
         } else if (error.code === 'insufficient_quota') {
-            return {
-                type: 'text',
-                content: 'El servicio ha alcanzado su límite de uso. Contacta al administrador.'
-            };
+            message += '**Problema**: Cuota de OpenAI agotada\n';
+            message += '**Solución**: Contacta al administrador para renovar la suscripción\n';
+        } else if (error.code === 'invalid_api_key') {
+            message += '**Problema**: API key de OpenAI inválida\n';
+            message += '**Solución**: Verificar configuración de OPENAI_API_KEY\n';
+        } else if (error.message && error.message.includes('timeout')) {
+            message += '**Problema**: Timeout de conexión\n';
+            message += '**Solución**: Intenta nuevamente en unos momentos\n';
         } else {
-            return {
-                type: 'text',
-                content: 'Error procesando solicitud. Intenta nuevamente en unos momentos.'
-            };
+            message += `**Problema**: ${error.message}\n`;
+            message += '**Solución**: Intenta nuevamente o contacta soporte\n';
         }
+
+        message += '\n**Funciones alternativas disponibles:**\n';
+        message += '• Las tarjetas de vacaciones siguen funcionando\n';
+        message += '• Los comandos básicos (login/logout) funcionan\n';
+
+        return {
+            type: 'text',
+            content: message
+        };
+    }
+
+    /**
+     * Método para diagnosticar estado actual
+     */
+    getDiagnosticInfo() {
+        return {
+            openaiAvailable: this.openaiAvailable,
+            initialized: this.initialized,
+            initializationError: this.initializationError,
+            searchAvailable: this.searchAvailable,
+            connectionTested: this.connectionTested || false,
+            envVars: {
+                hasOpenAIKey: !!process.env.OPENAI_API_KEY,
+                hasServiceEndpoint: !!process.env.SERVICE_ENDPOINT,
+                hasAPIKey: !!process.env.API_KEY,
+                hasBubbleToken: !!process.env.TOKEN_BUBBLE,
+                hasSIRHToken: !!process.env.TOKEN_SIRH
+            },
+            timestamp: new Date().toISOString()
+        };
+    }
+
+    /**
+     * Fuerza reinicialización
+     */
+    async forceReinitialize() {
+        console.log('🔄 Forzando reinicialización de OpenAI Service...');
+        
+        this.initialized = false;
+        this.openaiAvailable = false;
+        this.initializationError = null;
+        this.connectionTested = false;
+        
+        this.diagnoseConfiguration();
+        this.initializeOpenAI();
+        
+        if (this.openaiAvailable) {
+            await this.testOpenAIConnection();
+        }
+        
+        console.log(`✅ Reinicialización completada - Disponible: ${this.openaiAvailable}`);
+        
+        return this.getDiagnosticInfo();
     }
 }
 
