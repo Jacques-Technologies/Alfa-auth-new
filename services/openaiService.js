@@ -445,7 +445,7 @@ class OpenAIService {
     formatearHistorial(historial) {
         const mensajes = [{
             role: "system",
-            content: `Eres un asistente corporativo para Alfa Corporation. Ayudas con:
+            content: `Eres un asistente corporativo para Alfa Corporativo. Ayudas con:
 
 📚 INFORMACIÓN CORPORATIVA (PRIORIDAD):
 - SIEMPRE busca primero en documentos corporativos antes de responder
@@ -614,20 +614,18 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
      * Métodos para generar tarjetas (iguales que antes)
      */
     generarTarjetaVacaciones(tipo) {
-        const action = this.apiActions.vacaciones.solicitar;
+        // Clonar action para no modificar el original
+        const action = JSON.parse(JSON.stringify(this.apiActions.vacaciones.solicitar));
         
-        if (tipo === 'simular') {
-            action.fields = action.fields.map(field => 
-                field.id === 'simular' ? { ...field, value: 'true' } : field
-            );
-            action.title = 'Simular Vacaciones';
-            action.description = 'Simula una solicitud para verificar disponibilidad';
-        }
-
+        // Siempre simular primero (no mostrar la opción al usuario)
+        action.fields = action.fields.filter(field => field.id !== 'simular');
+        action.title = 'Solicitar Vacaciones';
+        action.description = 'Ingresa las fechas para verificar disponibilidad';
+        
         const card = this.crearTarjetaAdaptativa(action);
         
         return {
-            textContent: `🏖️ **${action.title}**\n\nCompleta los datos para tu solicitud:`,
+            textContent: `🏖️ **Solicitud de Vacaciones**\n\nIngresa las fechas para verificar disponibilidad:`,
             card: card
         };
     }

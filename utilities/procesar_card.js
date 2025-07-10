@@ -16,6 +16,11 @@ async function handleCardSubmit(context, submitData, getUserOAuthToken, handleTo
         if (submitData.vacation_type) {
             return await handleVacationGuideSubmit(context, submitData, openaiService);
         }
+        
+        // Verificar si es confirmación o cancelación de vacaciones
+        if (submitData.action === 'Confirmar Vacaciones' || submitData.action === 'Cancelar Vacaciones') {
+            return await handleVacationConfirmation(context, submitData, getUserOAuthToken, isTokenValid);
+        }
 
         // Validar datos básicos
         const { action, method, url, ...fieldData } = submitData;
@@ -52,10 +57,23 @@ async function handleCardSubmit(context, submitData, getUserOAuthToken, handleTo
             return;
         }
 
-        // Ejecutar petición HTTP
-        const response = await executeHttpRequest(method, processedUrl, oauthToken, processedData);
+        // Si es solicitud de vacaciones, forzar simulación primero
+        let finalUrl = processedUrl;
+        if (action === 'Solicitar Vacaciones' && url.includes('/vac/solicitudes/')) {
+            // Siempre simular primero
+            finalUrl = processedUrl.replace(/{simular}/g, 'true').replace(/\/false$/g, '/true');
+        }
 
-        // Formatear y enviar respuesta
+        // Ejecutar petición HTTP
+        const response = await executeHttpRequest(method, finalUrl, oauthToken, processedData);
+
+        // Para solicitudes de vacaciones, manejar confirmación
+        if (action === 'Solicitar Vacaciones' && response) {
+            await handleVacationSimulationResponse(context, response, url, fieldData, oauthToken);
+            return;
+        }
+
+        // Para otras acciones, enviar respuesta normal
         await sendFormattedResponse(context, action, response, openaiService);
 
     } catch (error) {
@@ -349,6 +367,124 @@ function sanitizeInputData(data) {
     }
     
     return sanitized;
+}
+
+/**
+ * Maneja la respuesta de simulación de vacaciones
+ */
+async function handleVacationSimulationResponse(context, response, originalUrl, fieldData, oauthToken) {
+    const { CardFactory } = require('botbuilder');
+    
+    try {
+        // Mostrar resultado de la simulación
+        const message = response.message || JSON.stringify(response, null, 2);
+        const isSuccess = response.success || (response.resultado && response.resultado.toLowerCase() === 'exitoso');
+        
+        if (!isSuccess) {
+            await context.sendActivity(`❌ **Simulación rechazada**\n\n${message}`);
+            return;
+        }
+        
+        // Mostrar detalles de la simulación
+        await context.sendActivity(`✅ **Simulación exitosa**\n\n${message}`);
+        
+        // Crear tarjeta de confirmación
+        const confirmCard = {
+            type: 'AdaptiveCard',
+            $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+            version: '1.3',
+            body: [
+                {
+                    type: 'TextBlock',
+                    text: '🤔 ¿Deseas confirmar esta solicitud de vacaciones?',
+                    size: 'Large',
+                    weight: 'Bolder',
+                    wrap: true
+                },
+                {
+                    type: 'TextBlock',
+                    text: 'La simulación fue exitosa. Al confirmar, se enviará la solicitud oficial.',
+                    wrap: true,
+                    spacing: 'Medium'
+                }
+            ],
+            actions: [
+                {
+                    type: 'Action.Submit',
+                    title: '✅ Sí, confirmar',
+                    data: {
+                        action: 'Confirmar Vacaciones',
+                        method: 'POST',
+                        url: originalUrl,
+                        confirmed: true,
+                        ...fieldData
+                    },
+                    style: 'positive'
+                },
+                {
+                    type: 'Action.Submit',
+                    title: '❌ No, cancelar',
+                    data: {
+                        action: 'Cancelar Vacaciones',
+                        cancelled: true
+                    },
+                    style: 'destructive'
+                }
+            ]
+        };
+        
+        await context.sendActivity({
+            attachments: [CardFactory.adaptiveCard(confirmCard)]
+        });
+        
+    } catch (error) {
+        console.error('Error en handleVacationSimulationResponse:', error);
+        await context.sendActivity('❌ Error procesando respuesta de simulación');
+    }
+}
+
+/**
+ * Maneja confirmación de vacaciones
+ */
+async function handleVacationConfirmation(context, submitData, getUserOAuthToken, isTokenValid) {
+    const userId = context.activity.from.id;
+    
+    try {
+        if (submitData.cancelled) {
+            await context.sendActivity('❌ **Solicitud cancelada**\n\nNo se envió la solicitud de vacaciones.');
+            return;
+        }
+        
+        if (!submitData.confirmed) {
+            return;
+        }
+        
+        // Obtener token
+        const oauthToken = await getUserOAuthToken(context, userId);
+        if (!oauthToken || !await isTokenValid(oauthToken)) {
+            await context.sendActivity('❌ Error de autenticación. Intenta nuevamente.');
+            return;
+        }
+        
+        // Procesar datos y URL con simular=false
+        const { processedUrl, processedData } = processRequestData(submitData.url, submitData);
+        const finalUrl = processedUrl.replace(/{simular}/g, 'false').replace(/\/true$/g, '/false');
+        
+        await context.sendActivity('📤 **Enviando solicitud oficial...**');
+        
+        // Ejecutar petición real
+        const response = await executeHttpRequest(submitData.method, finalUrl, oauthToken, processedData);
+        
+        if (response && (response.success || response.resultado)) {
+            await context.sendActivity(`✅ **¡Solicitud enviada exitosamente!**\n\n${response.message || 'Tu solicitud de vacaciones ha sido registrada.'}`);
+        } else {
+            await context.sendActivity(`❌ **Error al enviar solicitud**\n\n${response?.message || 'Intenta nuevamente más tarde.'}`);
+        }
+        
+    } catch (error) {
+        console.error('Error en handleVacationConfirmation:', error);
+        await context.sendActivity('❌ Error procesando confirmación de vacaciones');
+    }
 }
 
 module.exports = {
