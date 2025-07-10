@@ -514,10 +514,39 @@ async function handleVacationConfirmation(context, submitData, getUserOAuthToken
         // Ejecutar petición real
         const response = await executeHttpRequest(submitData.method, finalUrl, oauthToken, processedData);
         
-        if (response && (response.success || response.resultado)) {
-            await context.sendActivity(`✅ **¡Solicitud enviada exitosamente!**\n\n${response.message || 'Tu solicitud de vacaciones ha sido registrada.'}`);
+        // Evaluar si la respuesta indica éxito
+        let isSuccess = false;
+        let message = '';
+        
+        if (response) {
+            if (typeof response === 'string') {
+                message = response;
+                const lowerResponse = response.toLowerCase();
+                isSuccess = lowerResponse.includes('exitosamente') ||
+                           lowerResponse.includes('enviado') ||
+                           lowerResponse.includes('registrada') ||
+                           lowerResponse.includes('aprobada') ||
+                           lowerResponse.includes('procesada') ||
+                           lowerResponse.includes('completada') ||
+                           (lowerResponse.includes('solicitud') && lowerResponse.includes('envió'));
+            } else if (typeof response === 'object') {
+                message = response.message || JSON.stringify(response, null, 2);
+                isSuccess = response.success === true || 
+                           response.resultado === 'exitoso' ||
+                           response.status === 'success' ||
+                           response.status === 200 ||
+                           (response.message && (
+                               response.message.toLowerCase().includes('exitosamente') ||
+                               response.message.toLowerCase().includes('enviado') ||
+                               response.message.toLowerCase().includes('registrada')
+                           ));
+            }
+        }
+        
+        if (isSuccess) {
+            await context.sendActivity(`✅ **¡Solicitud enviada exitosamente!**\n\n${message}`);
         } else {
-            await context.sendActivity(`❌ **Error al enviar solicitud**\n\n${response?.message || 'Intenta nuevamente más tarde.'}`);
+            await context.sendActivity(`❌ **Error al enviar solicitud**\n\n${message || 'Intenta nuevamente más tarde.'}`);
         }
         
     } catch (error) {
