@@ -73,10 +73,10 @@ async function validateUserToken(context, userId, getUserOAuthToken, isTokenVali
 }
 
 /**
- * Genera una tarjeta de login on-demand
+ * Genera una respuesta que solicita autenticación
  * @param {string} toolName - Nombre de la herramienta que requiere auth
  * @param {string} toolDescription - Descripción de la herramienta
- * @returns {Object} - Respuesta con tarjeta de login
+ * @returns {Object} - Respuesta que solicita autenticación
  */
 function generateLoginCard(toolName, toolDescription) {
     // Mapeo de descripciones amigables para herramientas
@@ -87,51 +87,11 @@ function generateLoginCard(toolName, toolDescription) {
     
     const friendlyDescription = toolDescriptions[toolName] || toolDescription || toolName;
     
-    const loginCard = {
-        type: 'AdaptiveCard',
-        $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
-        version: '1.3',
-        body: [
-            {
-                type: 'TextBlock',
-                text: '🔐 Autenticación Requerida',
-                size: 'Large',
-                weight: 'Bolder',
-                color: 'Attention'
-            },
-            {
-                type: 'TextBlock',
-                text: `Para **${friendlyDescription}**, necesitas autenticarte primero.`,
-                wrap: true,
-                spacing: 'Medium'
-            },
-            {
-                type: 'TextBlock',
-                text: 'Haz clic en el botón de abajo para iniciar sesión con tu cuenta corporativa.',
-                wrap: true,
-                spacing: 'Small'
-            }
-        ],
-        actions: [
-            {
-                type: 'Action.Submit',
-                title: '🔑 Iniciar Sesión',
-                data: {
-                    action: 'login',
-                    msteams: {
-                        type: 'signin',
-                        value: 'login'
-                    }
-                },
-                style: 'positive'
-            }
-        ]
-    };
-
     return {
-        type: 'card',
-        content: `🔐 **Autenticación requerida**\n\nPara **${friendlyDescription}**, necesitas autenticarte primero.`,
-        card: CardFactory.adaptiveCard(loginCard)
+        type: 'auth_required',
+        content: `🔐 **Autenticación requerida**\n\nPara **${friendlyDescription}**, necesitas autenticarte primero.\n\n📝 Escribe **\`login\`** para iniciar sesión con tu cuenta corporativa.`,
+        toolName: toolName,
+        friendlyDescription: friendlyDescription
     };
 }
 
