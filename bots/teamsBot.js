@@ -140,11 +140,6 @@ class TeamsBot extends DialogBot {
             return;
         }
 
-        await context.sendActivity(
-            '🔐 **Iniciando autenticación...**\n\n' +
-            'Te redirigiremos al sistema de login corporativo.'
-        );
-        
         await this.dialog.run(context, this.dialogState);
     }
 
@@ -166,9 +161,12 @@ class TeamsBot extends DialogBot {
             await this.userState.saveChanges(context);
             console.log(`[${userId}] Estado persistente limpiado`);
             
-            // 3. NUEVO: Limpiar token del UserTokenClient (Bot Framework)
+            // 3. Limpiar token del UserTokenClient (Bot Framework) - FORZAR LIMPIEZA
             try {
-                const userTokenClient = context.turnState.get(context.adapter.UserTokenClientKey);
+                let userTokenClient = context.turnState.get(context.adapter.UserTokenClientKey) ||
+                                    context.turnState.get('UserTokenClient') ||
+                                    context.adapter.createUserTokenClient();
+                
                 const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
                 
                 if (userTokenClient && connectionName) {
@@ -413,23 +411,30 @@ class TeamsBot extends DialogBot {
             }
             console.log(`[${userId}] getUserOAuthToken - Sin token en memoria`);
 
-            // Obtener del UserTokenClient
-            const userTokenClient = context.turnState.get(context.adapter.UserTokenClientKey);
+            // Obtener del UserTokenClient (intentar múltiples formas)
+            let userTokenClient = context.turnState.get(context.adapter.UserTokenClientKey) ||
+                                context.turnState.get('UserTokenClient') ||
+                                context.adapter.createUserTokenClient();
+            
             const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
             console.log(`[${userId}] getUserOAuthToken - UserTokenClient disponible: ${!!userTokenClient}, connectionName: ${connectionName}`);
 
             if (userTokenClient && connectionName) {
-                const tokenResponse = await userTokenClient.getUserToken(
-                    userId,
-                    connectionName,
-                    context.activity.channelId
-                );
+                try {
+                    const tokenResponse = await userTokenClient.getUserToken(
+                        userId,
+                        connectionName,
+                        context.activity.channelId
+                    );
 
-                if (tokenResponse && tokenResponse.token) {
-                    console.log(`[${userId}] getUserOAuthToken - Token encontrado en USERTOKENCLIENT`);
-                    return tokenResponse.token;
+                    if (tokenResponse && tokenResponse.token) {
+                        console.log(`[${userId}] getUserOAuthToken - Token encontrado en USERTOKENCLIENT`);
+                        return tokenResponse.token;
+                    }
+                    console.log(`[${userId}] getUserOAuthToken - Sin token en UserTokenClient`);
+                } catch (tokenError) {
+                    console.warn(`[${userId}] Error obteniendo token de UserTokenClient:`, tokenError.message);
                 }
-                console.log(`[${userId}] getUserOAuthToken - Sin token en UserTokenClient`);
             }
 
             // Obtener del estado persistente

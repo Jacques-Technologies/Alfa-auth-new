@@ -130,8 +130,7 @@ class MainDialog extends LogoutDialog {
             
             await stepContext.context.sendActivity(
                 '🔐 **Autenticación Requerida**\n\n' +
-                'Necesitas iniciar sesión con tu cuenta corporativa para continuar.\n\n' +
-                '🔄 Redirigiendo al sistema de login...'
+                'Inicia sesión con tu cuenta corporativa para continuar.'
             );
             
             return await stepContext.beginDialog(OAUTH_PROMPT);
