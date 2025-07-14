@@ -95,19 +95,9 @@ class TeamsBot extends DialogBot {
                 } else if (context.activity.value) {
                     await this.handleCardSubmit(context);
                 } else {
-                    // Mensajes regulares - verificar autenticación
-                    console.log(`[${userId}] TeamsBot - Verificando autenticación para mensaje regular...`);
-                    const isAuthenticated = await this.isUserAuthenticated(userId, context);
-                    console.log(`[${userId}] TeamsBot - Usuario autenticado: ${isAuthenticated}`);
-                    
-                    if (isAuthenticated) {
-                        console.log(`[${userId}] TeamsBot - Procesando mensaje autenticado`);
-                        await this.processAuthenticatedMessage(context, text, userId);
-                    } else {
-                        console.log(`[${userId}] TeamsBot - Usuario NO autenticado, ejecutando diálogo`);
-                        // Para usuarios no autenticados: ejecutar diálogo directamente
-                        await this.dialog.run(context, this.dialogState);
-                    }
+                    // Mensajes regulares - procesar directamente (autenticación bajo demanda)
+                    console.log(`[${userId}] TeamsBot - Procesando mensaje (autenticación bajo demanda)`);
+                    await this.processAuthenticatedMessage(context, text, userId);
                 }
             } finally {
                 this.activeProcesses.delete(userId);

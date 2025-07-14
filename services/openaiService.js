@@ -5,6 +5,7 @@ const { DateTime } = require('luxon');
 const axios = require('axios');
 const { SearchClient, AzureKeyCredential } = require('@azure/search-documents');
 const { CardFactory } = require('botbuilder');
+const { checkAuthenticationForTool } = require('../utilities/authenticationHelper');
 require('dotenv').config();
 
 /**
@@ -535,6 +536,17 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 
                 const resultado = await this.ejecutarHerramienta(name, parametros, context, userId);
                 
+                // Manejar respuestas de autenticación
+                if (resultado && resultado.type === 'card' && resultado.card) {
+                    console.log('🔒 Retornando respuesta de autenticación');
+                    return resultado;
+                }
+                
+                if (resultado && resultado.type === 'text') {
+                    console.log('🔒 Retornando mensaje de autenticación');
+                    return resultado;
+                }
+                
                 if (resultado && resultado.card) {
                     console.log('🃏 Retornando respuesta con tarjeta');
                     return {
@@ -585,9 +597,28 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
     }
 
     /**
-     * Ejecuta herramienta específica (igual que antes)
+     * Ejecuta herramienta específica con validación de autenticación
      */
     async ejecutarHerramienta(nombre, parametros, context = null, userId = null) {
+        // Validar autenticación si la herramienta la requiere
+        if (context && userId) {
+            const bot = global.botInstance;
+            if (bot && typeof bot.getUserOAuthToken === 'function' && typeof bot.isTokenValid === 'function') {
+                const authResult = await checkAuthenticationForTool(
+                    nombre, 
+                    context, 
+                    userId, 
+                    bot.getUserOAuthToken.bind(bot), 
+                    bot.isTokenValid.bind(bot)
+                );
+                
+                if (!authResult.canExecute) {
+                    console.log(`🔒 Herramienta ${nombre} bloqueada por falta de autenticación`);
+                    return authResult.response;
+                }
+            }
+        }
+        
         switch (nombre) {
             case 'FechaHoy':
                 return DateTime.now().setZone('America/Mexico_City').toISODate();
