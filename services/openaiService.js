@@ -537,18 +537,8 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 const resultado = await this.ejecutarHerramienta(name, parametros, context, userId);
                 
                 // Manejar respuestas de autenticación
-                if (resultado && resultado.type === 'oauth_required') {
-                    console.log('🔒 Activando diálogo OAuth directamente');
-                    return {
-                        type: 'oauth_required',
-                        content: resultado.content,
-                        toolName: resultado.toolName,
-                        friendlyDescription: resultado.friendlyDescription
-                    };
-                }
-                
                 if (resultado && resultado.type === 'card' && resultado.card) {
-                    console.log('🔒 Retornando respuesta de autenticación');
+                    console.log('🔒 Retornando tarjeta de autenticación');
                     return resultado;
                 }
                 
