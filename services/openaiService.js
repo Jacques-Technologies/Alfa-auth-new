@@ -564,6 +564,15 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 
             } catch (error) {
                 console.error(`❌ Error ejecutando herramienta ${name}:`, error);
+                
+                // Si es un error de token requerido, intentar generar card de login
+                if (error.message === 'TOKEN_REQUIRED') {
+                    console.log(`🔒 Token requerido para ${name}, generando card de login`);
+                    const { generateLoginCard } = require('../utilities/authenticationHelper');
+                    const loginCard = generateLoginCard(name);
+                    return loginCard;
+                }
+                
                 resultados.push({
                     tool_call_id: id,
                     content: `Error: ${error.message}`
@@ -600,10 +609,14 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
      * Ejecuta herramienta específica con validación de autenticación
      */
     async ejecutarHerramienta(nombre, parametros, context = null, userId = null) {
+        console.log(`🔧 ejecutarHerramienta: ${nombre}, context: ${!!context}, userId: ${!!userId}`);
+        
         // Validar autenticación si la herramienta la requiere
         if (context && userId) {
             const bot = global.botInstance;
+            console.log(`🔧 Bot instance disponible: ${!!bot}`);
             if (bot && typeof bot.getUserOAuthToken === 'function' && typeof bot.isTokenValid === 'function') {
+                console.log(`🔧 Validando autenticación para herramienta: ${nombre}`);
                 const authResult = await checkAuthenticationForTool(
                     nombre, 
                     context, 
@@ -612,11 +625,17 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                     bot.isTokenValid.bind(bot)
                 );
                 
+                console.log(`🔧 Resultado de autenticación: canExecute=${authResult.canExecute}`);
+                
                 if (!authResult.canExecute) {
                     console.log(`🔒 Herramienta ${nombre} bloqueada por falta de autenticación`);
                     return authResult.response;
                 }
+            } else {
+                console.log(`🔧 Bot instance no disponible o métodos faltantes`);
             }
+        } else {
+            console.log(`🔧 Context o userId no disponibles - saltando validación de auth`);
         }
         
         switch (nombre) {
@@ -714,9 +733,8 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             }
             
             if (!userToken) {
-                return `❌ **Error de autenticación**\n\n` +
-                       `**Problema**: No se pudo obtener token de usuario\n` +
-                       `**Solución**: Intenta hacer logout y login nuevamente`;
+                // Si no hay token, devolver error simple para que el sistema de auth bajo demanda funcione
+                throw new Error('TOKEN_REQUIRED');
             }
             
             const authHeader = `Bearer ${userToken}`;
@@ -840,9 +858,8 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             }
             
             if (!userToken) {
-                return `❌ **Error de autenticación**\n\n` +
-                       `**Problema**: No se pudo obtener token de usuario\n` +
-                       `**Solución**: Intenta hacer logout y login nuevamente`;
+                // Si no hay token, devolver error simple para que el sistema de auth bajo demanda funcione
+                throw new Error('TOKEN_REQUIRED');
             }
             
             const authHeader = `Bearer ${userToken}`;
