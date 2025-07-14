@@ -451,6 +451,13 @@ class TeamsBot extends DialogBot {
     }
 
     /**
+     * Valida si un token es válido
+     */
+    async isTokenValid(token) {
+        return await isTokenValid(token);
+    }
+
+    /**
      * Maneja expiración de token
      */
     async handleTokenExpiration(context, userId) {

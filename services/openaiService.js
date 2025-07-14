@@ -615,6 +615,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         if (context && userId) {
             const bot = global.botInstance;
             console.log(`🔧 Bot instance disponible: ${!!bot}`);
+            console.log(`🔧 Métodos disponibles: getUserOAuthToken=${typeof bot.getUserOAuthToken}, isTokenValid=${typeof bot.isTokenValid}`);
             if (bot && typeof bot.getUserOAuthToken === 'function' && typeof bot.isTokenValid === 'function') {
                 console.log(`🔧 Validando autenticación para herramienta: ${nombre}`);
                 const authResult = await checkAuthenticationForTool(
@@ -831,6 +832,11 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 data: error.response?.data
             });
             
+            // Si es un error de token requerido, re-lanzarlo para que el sistema de auth bajo demanda funcione
+            if (error.message === 'TOKEN_REQUIRED') {
+                throw error;
+            }
+            
             if (error.response?.status === 401) {
                 return `❌ **Error de autenticación (401)**\n\n` +
                        `**Problema**: Token de usuario inválido o expirado\n` +
@@ -886,6 +892,11 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 data: error.response?.data,
                 headers: error.response?.headers
             });
+            
+            // Si es un error de token requerido, re-lanzarlo para que el sistema de auth bajo demanda funcione
+            if (error.message === 'TOKEN_REQUIRED') {
+                throw error;
+            }
             
             if (error.response?.status === 401) {
                 return `❌ **Error de autenticación (401)**\n\n` +
