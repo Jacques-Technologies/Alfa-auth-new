@@ -237,6 +237,26 @@ class OpenAIService {
                     description: "Consulta información completa del empleado incluyendo días de vacaciones disponibles, datos personales, información laboral y perfil del usuario. Usa esta herramienta cuando pregunten sobre datos del empleado, días disponibles, información personal o laboral.",
                     parameters: { type: "object", properties: {} }
                 }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "cancelar_solicitud_vacaciones",
+                    description: "Cancela una solicitud de vacaciones específica. El usuario puede mencionar fechas para identificar la solicitud. Si no se especifica el ID, usa consultar_mis_solicitudes para encontrar la solicitud correcta.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            fechaReferencia: {
+                                type: "string",
+                                description: "Fecha de referencia mencionada por el usuario para identificar la solicitud (formato YYYY-MM-DD)"
+                            },
+                            idSolicitud: {
+                                type: "string",
+                                description: "ID específico de la solicitud a cancelar si se conoce"
+                            }
+                        }
+                    }
+                }
             }
         ];
 
@@ -655,6 +675,9 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
 
             case 'buscar_empleado':
                 return await this.buscarEmpleado(parametros.nombre, parametros.apellido);
+
+            case 'cancelar_solicitud_vacaciones':
+                return await this.cancelarSolicitudVacaciones(parametros, context, userId);
 
             default:
                 throw new Error(`Herramienta desconocida: ${nombre}`);
@@ -1253,6 +1276,169 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         } catch (error) {
             console.error('Error buscando empleado:', error.message);
             return `Error buscando empleado: ${error.message}`;
+        }
+    }
+
+    /**
+     * Cancela una solicitud de vacaciones específica
+     * @param {Object} parametros - Parámetros de la función
+     * @param {Object} context - Contexto del bot
+     * @param {string} userId - ID del usuario
+     * @returns {string} - Resultado de la cancelación
+     */
+    async cancelarSolicitudVacaciones(parametros, context, userId) {
+        try {
+            console.log('🗑️ Cancelando solicitud de vacaciones...', parametros);
+            
+            // Obtener token del usuario autenticado
+            const bot = global.botInstance;
+            let userToken = null;
+            
+            if (bot && typeof bot.getUserOAuthToken === 'function') {
+                userToken = await bot.getUserOAuthToken(context, userId);
+                console.log(`🔑 Token de usuario obtenido: ${userToken ? 'SÍ' : 'NO'}`);
+            } else {
+                console.error('❌ No se pudo obtener instancia del bot o método getUserOAuthToken');
+            }
+            
+            if (!userToken) {
+                throw new Error('TOKEN_REQUIRED');
+            }
+            
+            let idSolicitud = parametros.idSolicitud;
+            
+            // Si no se proporcionó ID, buscar por fecha de referencia
+            if (!idSolicitud && parametros.fechaReferencia) {
+                console.log(`🔍 Buscando solicitud por fecha de referencia: ${parametros.fechaReferencia}`);
+                idSolicitud = await this.buscarSolicitudPorFecha(parametros.fechaReferencia, userToken);
+            }
+            
+            // Si aún no tenemos ID, consultar todas las solicitudes
+            if (!idSolicitud) {
+                console.log('📋 Consultando todas las solicitudes para encontrar la correcta...');
+                const solicitudes = await this.obtenerSolicitudesUsuario(userToken);
+                
+                if (solicitudes.length === 0) {
+                    return '❌ **No tienes solicitudes de vacaciones para cancelar**';
+                }
+                
+                if (solicitudes.length === 1) {
+                    idSolicitud = solicitudes[0].id;
+                    console.log(`✅ Solo una solicitud encontrada, usando ID: ${idSolicitud}`);
+                } else {
+                    // Múltiples solicitudes - mostrar lista para que el usuario elija
+                    let listaSolicitudes = '📋 **Tienes varias solicitudes de vacaciones:**\n\n';
+                    solicitudes.forEach((solicitud, index) => {
+                        const fechaSalida = new Date(solicitud.fechaSalida).toLocaleDateString('es-MX');
+                        const fechaRegreso = new Date(solicitud.fechaRegreso).toLocaleDateString('es-MX');
+                        listaSolicitudes += `${index + 1}. **${fechaSalida} - ${fechaRegreso}** (${solicitud.diasSolicitados} días) - ${solicitud.estado}\n`;
+                    });
+                    listaSolicitudes += '\n💡 **Especifica las fechas** de la solicitud que deseas cancelar (ejemplo: "cancelar mi solicitud del 15 de enero")';
+                    
+                    return listaSolicitudes;
+                }
+            }
+            
+            if (!idSolicitud) {
+                return '❌ **No se pudo identificar la solicitud a cancelar**\n\n' +
+                       '💡 Especifica las fechas de la solicitud que deseas cancelar';
+            }
+            
+            // Realizar la cancelación
+            const authHeader = `Bearer ${userToken}`;
+            const response = await axios.put(
+                `https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/${idSolicitud}/cancelar`,
+                {},
+                {
+                    headers: {
+                        'Authorization': authHeader,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 10000
+                }
+            );
+            
+            console.log(`✅ Solicitud cancelada exitosamente (status: ${response.status})`);
+            
+            // Formatear respuesta
+            if (response.data && response.data.message) {
+                return `✅ **Solicitud cancelada exitosamente**\n\n${response.data.message}`;
+            } else {
+                return `✅ **Solicitud cancelada exitosamente**\n\nTu solicitud de vacaciones ha sido cancelada.`;
+            }
+            
+        } catch (error) {
+            console.error('❌ Error cancelando solicitud:', error.message);
+            
+            if (error.message === 'TOKEN_REQUIRED') {
+                throw error;
+            }
+            
+            if (error.response?.status === 401) {
+                return `❌ **Error de autenticación (401)**\n\n` +
+                       `**Problema**: Token de usuario inválido o expirado\n` +
+                       `**Solución**: Intenta hacer logout y login nuevamente`;
+            }
+            
+            if (error.response?.status === 404) {
+                return `❌ **Solicitud no encontrada**\n\n` +
+                       `La solicitud que intentas cancelar no existe o ya fue procesada.`;
+            }
+            
+            return `❌ **Error al cancelar solicitud**: ${error.message}`;
+        }
+    }
+    
+    /**
+     * Busca una solicitud por fecha de referencia
+     * @param {string} fechaReferencia - Fecha de referencia
+     * @param {string} userToken - Token del usuario
+     * @returns {string|null} - ID de la solicitud o null
+     */
+    async buscarSolicitudPorFecha(fechaReferencia, userToken) {
+        try {
+            const solicitudes = await this.obtenerSolicitudesUsuario(userToken);
+            
+            // Buscar solicitud que contenga la fecha de referencia
+            const fechaRef = new Date(fechaReferencia);
+            const solicitudEncontrada = solicitudes.find(solicitud => {
+                const fechaSalida = new Date(solicitud.fechaSalida);
+                const fechaRegreso = new Date(solicitud.fechaRegreso);
+                
+                return fechaRef >= fechaSalida && fechaRef <= fechaRegreso;
+            });
+            
+            return solicitudEncontrada ? solicitudEncontrada.id : null;
+            
+        } catch (error) {
+            console.error('Error buscando solicitud por fecha:', error.message);
+            return null;
+        }
+    }
+    
+    /**
+     * Obtiene todas las solicitudes del usuario
+     * @param {string} userToken - Token del usuario
+     * @returns {Array} - Lista de solicitudes
+     */
+    async obtenerSolicitudesUsuario(userToken) {
+        try {
+            const authHeader = `Bearer ${userToken}`;
+            const response = await axios.get(
+                'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/empleado',
+                {
+                    headers: {
+                        'Authorization': authHeader
+                    },
+                    timeout: 10000
+                }
+            );
+            
+            return response.data || [];
+            
+        } catch (error) {
+            console.error('Error obteniendo solicitudes:', error.message);
+            return [];
         }
     }
 

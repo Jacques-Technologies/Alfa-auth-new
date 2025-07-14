@@ -7,7 +7,8 @@ const { CardFactory } = require('botbuilder');
  */
 const TOOLS_REQUIRING_AUTH = [
     'consultar_mis_solicitudes',
-    'consultar_informacion_empleado'
+    'consultar_informacion_empleado',
+    'cancelar_solicitud_vacaciones'
 ];
 
 /**
@@ -82,7 +83,8 @@ function generateLoginCard(toolName, toolDescription) {
     // Mapeo de descripciones amigables para herramientas
     const toolDescriptions = {
         'consultar_mis_solicitudes': 'consultar tus solicitudes de vacaciones',
-        'consultar_informacion_empleado': 'obtener tu información como empleado'
+        'consultar_informacion_empleado': 'obtener tu información como empleado',
+        'cancelar_solicitud_vacaciones': 'cancelar una solicitud de vacaciones'
     };
     
     const friendlyDescription = toolDescriptions[toolName] || toolDescription || toolName;
