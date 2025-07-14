@@ -871,7 +871,14 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             );
             
             console.log(`✅ Respuesta exitosa de SIRH API (status: ${response.status})`);
-            return `📋 **Mis Solicitudes de Vacaciones**\n\n${JSON.stringify(response.data, null, 2)}`;
+            
+            // Crear tarjeta con tabla de solicitudes
+            const solicitudesCard = this.crearTarjetaSolicitudes(response.data);
+            
+            return {
+                textContent: `📋 **Mis Solicitudes de Vacaciones**\n\nAquí tienes el resumen de tus solicitudes:`,
+                card: solicitudesCard
+            };
             
         } catch (error) {
             console.error('❌ Error completo consultando solicitudes:', {
@@ -895,6 +902,212 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             
             return `❌ Error al consultar solicitudes: ${error.message}`;
         }
+    }
+
+    /**
+     * Crea tarjeta adaptativa con tabla de solicitudes de vacaciones
+     */
+    crearTarjetaSolicitudes(solicitudes) {
+        // Procesar datos de solicitudes
+        const solicitudesProcessed = solicitudes.map(solicitud => {
+            // Formatear fechas
+            const fechaSalida = new Date(solicitud.fechaSalida).toLocaleDateString('es-MX', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric'
+            });
+            const fechaRegreso = new Date(solicitud.fechaRegreso).toLocaleDateString('es-MX', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric'
+            });
+            
+            // Determinar color del estado
+            let colorEstado = 'default';
+            let iconoEstado = '⏳';
+            
+            if (solicitud.estatus === 'AUTORIZADA') {
+                colorEstado = 'good';
+                iconoEstado = '✅';
+            } else if (solicitud.estatus === 'PENDIENTE') {
+                colorEstado = 'attention';
+                iconoEstado = '⏳';
+            } else if (solicitud.estatus === 'RECHAZADA') {
+                colorEstado = 'danger';
+                iconoEstado = '❌';
+            }
+            
+            return {
+                tipo: solicitud.tipoSolicitud,
+                fechaSalida,
+                fechaRegreso,
+                dias: solicitud.cantidadDias,
+                estatus: solicitud.estatus,
+                colorEstado,
+                iconoEstado
+            };
+        });
+
+        // Crear elementos de la tabla
+        const tablaItems = [];
+        
+        // Encabezado
+        tablaItems.push({
+            type: 'ColumnSet',
+            columns: [
+                {
+                    type: 'Column',
+                    width: 'stretch',
+                    items: [{
+                        type: 'TextBlock',
+                        text: '**Tipo**',
+                        size: 'small',
+                        weight: 'bolder'
+                    }]
+                },
+                {
+                    type: 'Column',
+                    width: 'stretch',
+                    items: [{
+                        type: 'TextBlock',
+                        text: '**Fechas**',
+                        size: 'small',
+                        weight: 'bolder'
+                    }]
+                },
+                {
+                    type: 'Column',
+                    width: 'auto',
+                    items: [{
+                        type: 'TextBlock',
+                        text: '**Días**',
+                        size: 'small',
+                        weight: 'bolder'
+                    }]
+                },
+                {
+                    type: 'Column',
+                    width: 'auto',
+                    items: [{
+                        type: 'TextBlock',
+                        text: '**Estado**',
+                        size: 'small',
+                        weight: 'bolder'
+                    }]
+                }
+            ]
+        });
+
+        // Separador
+        tablaItems.push({
+            type: 'TextBlock',
+            text: '___',
+            spacing: 'small'
+        });
+
+        // Filas de datos
+        solicitudesProcessed.forEach(solicitud => {
+            tablaItems.push({
+                type: 'ColumnSet',
+                columns: [
+                    {
+                        type: 'Column',
+                        width: 'stretch',
+                        items: [{
+                            type: 'TextBlock',
+                            text: solicitud.tipo,
+                            size: 'small',
+                            wrap: true
+                        }]
+                    },
+                    {
+                        type: 'Column',
+                        width: 'stretch',
+                        items: [{
+                            type: 'TextBlock',
+                            text: `${solicitud.fechaSalida}\n${solicitud.fechaRegreso}`,
+                            size: 'small',
+                            wrap: true
+                        }]
+                    },
+                    {
+                        type: 'Column',
+                        width: 'auto',
+                        items: [{
+                            type: 'TextBlock',
+                            text: `${solicitud.dias}`,
+                            size: 'small',
+                            horizontalAlignment: 'center'
+                        }]
+                    },
+                    {
+                        type: 'Column',
+                        width: 'auto',
+                        items: [{
+                            type: 'TextBlock',
+                            text: `${solicitud.iconoEstado} ${solicitud.estatus}`,
+                            size: 'small',
+                            color: solicitud.colorEstado,
+                            horizontalAlignment: 'center'
+                        }]
+                    }
+                ],
+                spacing: 'small'
+            });
+        });
+
+        // Resumen estadístico
+        const autorizadas = solicitudesProcessed.filter(s => s.estatus === 'AUTORIZADA').length;
+        const pendientes = solicitudesProcessed.filter(s => s.estatus === 'PENDIENTE').length;
+        const rechazadas = solicitudesProcessed.filter(s => s.estatus === 'RECHAZADA').length;
+
+        const card = {
+            type: 'AdaptiveCard',
+            $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+            version: '1.3',
+            body: [
+                {
+                    type: 'TextBlock',
+                    text: '📋 Mis Solicitudes de Vacaciones',
+                    size: 'large',
+                    weight: 'bolder',
+                    color: 'accent'
+                },
+                ...tablaItems,
+                {
+                    type: 'TextBlock',
+                    text: '___',
+                    spacing: 'medium'
+                },
+                {
+                    type: 'ColumnSet',
+                    columns: [
+                        {
+                            type: 'Column',
+                            width: 'stretch',
+                            items: [{
+                                type: 'TextBlock',
+                                text: `**Resumen:** ${solicitudesProcessed.length} solicitudes`,
+                                size: 'small',
+                                weight: 'bolder'
+                            }]
+                        },
+                        {
+                            type: 'Column',
+                            width: 'auto',
+                            items: [{
+                                type: 'TextBlock',
+                                text: `✅ ${autorizadas} | ⏳ ${pendientes} | ❌ ${rechazadas}`,
+                                size: 'small',
+                                horizontalAlignment: 'right'
+                            }]
+                        }
+                    ]
+                }
+            ]
+        };
+
+        return CardFactory.adaptiveCard(card);
     }
 
     async buscarEnDocumentos(consulta) {
