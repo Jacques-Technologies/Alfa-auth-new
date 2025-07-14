@@ -198,7 +198,7 @@ class OpenAIService {
                         properties: {
                             tipo: {
                                 type: "string",
-                                enum: ["solicitar", "simular", "consultar"],
+                                enum: ["solicitar", "verificar", "consultar"],
                                 description: "Tipo de operación de vacaciones"
                             }
                         },
@@ -317,7 +317,7 @@ class OpenAIService {
                         { id: 'fechaInicio', type: 'date', label: 'Fecha de inicio', required: true },
                         { id: 'fechaFin', type: 'date', label: 'Fecha de fin', required: true },
                         { id: 'medioDia', type: 'choice', label: '¿Medio día?', value: 'false', choices: ['true', 'false'], required: true },
-                        { id: 'simular', type: 'choice', label: '¿Solo simular?', value: 'true', choices: ['true', 'false'], required: true }
+                        { id: 'simular', type: 'choice', label: '¿Solo verificar?', value: 'true', choices: ['true', 'false'], required: true }
                     ],
                     icon: '🏖️'
                 }
@@ -465,7 +465,7 @@ class OpenAIService {
 🏖️ VACACIONES:
 - Solicitar vacaciones regulares, por matrimonio o nacimiento
 - Consultar estado de solicitudes
-- Simular disponibilidad de días
+- Verificar disponibilidad de días
 
 👥 DIRECTORIO Y SERVICIOS:
 - Buscar empleados en directorio
@@ -668,7 +668,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
         // Clonar action para no modificar el original
         const action = JSON.parse(JSON.stringify(this.apiActions.vacaciones.solicitar));
         
-        // Siempre simular primero (no mostrar la opción al usuario)
+        // Siempre verificar disponibilidad primero (no mostrar la opción al usuario)
         action.fields = action.fields.filter(field => field.id !== 'simular');
         action.title = 'Solicitar Vacaciones';
         action.description = 'Ingresa las fechas para verificar disponibilidad';

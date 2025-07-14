@@ -57,10 +57,10 @@ async function handleCardSubmit(context, submitData, getUserOAuthToken, handleTo
             return;
         }
 
-        // Si es solicitud de vacaciones, forzar simulación primero
+        // Si es solicitud de vacaciones, verificar disponibilidad primero
         let finalUrl = processedUrl;
         if (action === 'Solicitar Vacaciones' && url.includes('/vac/solicitudes/')) {
-            // Siempre simular primero
+            // Siempre verificar disponibilidad primero
             finalUrl = processedUrl.replace(/{simular}/g, 'true').replace(/\/false$/g, '/true');
         }
 
@@ -69,7 +69,7 @@ async function handleCardSubmit(context, submitData, getUserOAuthToken, handleTo
 
         // Para solicitudes de vacaciones, manejar confirmación
         if (action === 'Solicitar Vacaciones' && response) {
-            await handleVacationSimulationResponse(context, response, url, fieldData, oauthToken);
+            await handleVacationValidationResponse(context, response, url, fieldData, oauthToken);
             return;
         }
 
@@ -375,9 +375,9 @@ function sanitizeInputData(data) {
 }
 
 /**
- * Maneja la respuesta de simulación de vacaciones
+ * Maneja la respuesta de validación de vacaciones
  */
-async function handleVacationSimulationResponse(context, response, originalUrl, fieldData, oauthToken) {
+async function handleVacationValidationResponse(context, response, originalUrl, fieldData, oauthToken) {
     const { CardFactory } = require('botbuilder');
     
     try {
@@ -415,12 +415,12 @@ async function handleVacationSimulationResponse(context, response, originalUrl, 
         }
         
         if (!isSuccess) {
-            await context.sendActivity(`❌ **Simulación rechazada**\n\n${message}`);
+            await context.sendActivity(`❌ **Solicitud no disponible**\n\n${message}`);
             return;
         }
         
-        // Mostrar detalles de la simulación
-        await context.sendActivity(`✅ **Simulación exitosa**\n\n${message}`);
+        // Mostrar detalles de la verificación
+        await context.sendActivity(`✅ **Fechas disponibles**\n\n${message}`);
         
         // Crear tarjeta de confirmación
         const confirmCard = {
@@ -437,7 +437,7 @@ async function handleVacationSimulationResponse(context, response, originalUrl, 
                 },
                 {
                     type: 'TextBlock',
-                    text: 'La simulación fue exitosa. Al confirmar, se enviará la solicitud oficial.',
+                    text: 'Las fechas están disponibles. Al confirmar, se enviará la solicitud oficial.',
                     wrap: true,
                     spacing: 'Medium'
                 }
@@ -473,7 +473,7 @@ async function handleVacationSimulationResponse(context, response, originalUrl, 
         
     } catch (error) {
         console.error('Error en handleVacationSimulationResponse:', error);
-        await context.sendActivity('❌ Error procesando respuesta de simulación');
+        await context.sendActivity('❌ Error procesando respuesta de validación');
     }
 }
 
