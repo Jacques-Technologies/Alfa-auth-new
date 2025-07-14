@@ -1,8 +1,8 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
   "manifestVersion": "1.19",
-  "version": "2.2.0",
-  "id": "10bb16e0-89af-4080-b4ba-e875a2270c15",
+  "version": "1.0.0",
+  "id": "1582438e-3473-442f-8802-4f9f031f9c13",
   "developer": {
       "name": "Alfa Corporativo",
       "websiteUrl": "https://www.alfa.com.mx",
@@ -14,17 +14,17 @@
     "outline": "outline.png"
   },
   "name": {
-    "short": "Alfa QA bot ",
-    "full": "Alfa QA bot"
+    "short": "Alfabot Staging",
+    "full": "Alfabot Staging"
   },
   "description": {
-    "short": "Autenticación con Teams",
-    "full": "Autenticación con Teams"
+    "short": "Ambiente de pruebas en entorno Staging",
+    "full": "Ambiente de pruebas en entorno Staging"
   },
   "accentColor": "#FFFFFF",
   "bots": [
     {
-      "botId": "10bb16e0-89af-4080-b4ba-e875a2270c15",
+      "botId": "1582438e-3473-442f-8802-4f9f031f9c13",
       "scopes": [
         "personal"
       ],

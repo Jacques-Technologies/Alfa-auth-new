@@ -242,7 +242,7 @@ class OpenAIService {
                 type: "function",
                 function: {
                     name: "cancelar_solicitud_vacaciones",
-                    description: "Cancela una solicitud de vacaciones específica. El usuario puede mencionar fechas para identificar la solicitud. Si no se especifica el ID, usa consultar_mis_solicitudes para encontrar la solicitud correcta.",
+                    description: "USAR SIEMPRE que el usuario quiera cancelar, anular o eliminar una solicitud de vacaciones. Funciona con fechas como referencia. Ejemplos: 'cancelar solicitud', 'quiero cancelar mi solicitud del 22 de julio', 'eliminar mi solicitud de vacaciones'.",
                     parameters: {
                         type: "object",
                         properties: {
@@ -257,7 +257,7 @@ class OpenAIService {
                         }
                     }
                 }
-            }
+            
         ];
 
         // Agregar búsqueda si está disponible
@@ -389,9 +389,11 @@ class OpenAIService {
             }
 
             console.log('📝 Procesando mensaje con OpenAI...');
+            console.log(`📬 Mensaje del usuario: "${mensaje}"`);
             
             const mensajes = this.formatearHistorial(historial);
             mensajes.push({ role: "user", content: mensaje });
+            console.log(`📚 Total de mensajes enviados: ${mensajes.length}`);
 
             const requestConfig = {
                 model: "gpt-4-turbo",
@@ -404,6 +406,12 @@ class OpenAIService {
             if (!this.esComandoBasico(mensaje)) {
                 requestConfig.tools = this.tools;
                 requestConfig.tool_choice = "auto";
+                console.log(`🔧 Herramientas disponibles: ${this.tools.length}`);
+                this.tools.forEach(tool => {
+                    console.log(`  - ${tool.function.name}: ${tool.function.description}`);
+                });
+            } else {
+                console.log('💬 Comando básico detectado, sin herramientas');
             }
 
             console.log('🤖 Enviando request a OpenAI...');
@@ -417,11 +425,17 @@ class OpenAIService {
 
             // Procesar llamadas a herramientas
             if (messageResponse.tool_calls) {
-                console.log('🔧 Procesando herramientas...');
+                console.log(`🔧 OpenAI quiere ejecutar ${messageResponse.tool_calls.length} herramienta(s):`);
+                messageResponse.tool_calls.forEach(call => {
+                    console.log(`  - ${call.function.name} con argumentos: ${call.function.arguments}`);
+                });
                 return await this.procesarHerramientas(messageResponse, mensajes, context, userId);
+            } else {
+                console.log('ℹ️ OpenAI no solicitó ejecutar herramientas');
             }
 
             console.log('✅ Respuesta de OpenAI recibida exitosamente');
+            console.log(`💬 Respuesta: ${messageResponse.content ? messageResponse.content.substring(0, 200) + '...' : 'Sin contenido'}`);
             return {
                 type: 'text',
                 content: messageResponse.content || 'Respuesta vacía de OpenAI'
@@ -677,6 +691,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 return await this.buscarEmpleado(parametros.nombre, parametros.apellido);
 
             case 'cancelar_solicitud_vacaciones':
+                console.log(`🗑️ Ejecutando cancelar_solicitud_vacaciones con parámetros:`, parametros);
                 return await this.cancelarSolicitudVacaciones(parametros, context, userId);
 
             default:
