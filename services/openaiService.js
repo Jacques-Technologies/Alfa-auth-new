@@ -257,7 +257,7 @@ class OpenAIService {
                         }
                     }
                 }
-            
+            }
         ];
 
         // Agregar búsqueda si está disponible
