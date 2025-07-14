@@ -257,6 +257,57 @@ class OpenAIService {
                         }
                     }
                 }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "consultar_solicitudes_dependientes",
+                    description: "Consulta las solicitudes de vacaciones pendientes de aprobación de tus reportes directos. Usar cuando pregunten sobre solicitudes para aprobar, solicitudes pendientes de sus empleados, o cuando necesiten revisar solicitudes como jefe/supervisor.",
+                    parameters: {
+                        type: "object",
+                        properties: {}
+                    }
+                }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "autorizar_solicitud_dependiente",
+                    description: "Autoriza/aprueba una solicitud de vacaciones de un reporte directo. Usar cuando el usuario quiera aprobar, autorizar o dar visto bueno a una solicitud.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            idSolicitud: {
+                                type: "string",
+                                description: "ID de la solicitud a autorizar"
+                            },
+                            nombreEmpleado: {
+                                type: "string",
+                                description: "Nombre del empleado mencionado por el usuario para identificar la solicitud"
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "rechazar_solicitud_dependiente",
+                    description: "Rechaza/deniega una solicitud de vacaciones de un reporte directo. Usar cuando el usuario quiera rechazar, denegar o no aprobar una solicitud.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            idSolicitud: {
+                                type: "string",
+                                description: "ID de la solicitud a rechazar"
+                            },
+                            nombreEmpleado: {
+                                type: "string",
+                                description: "Nombre del empleado mencionado por el usuario para identificar la solicitud"
+                            }
+                        }
+                    }
+                }
             }
         ];
 
@@ -693,6 +744,18 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             case 'cancelar_solicitud_vacaciones':
                 console.log(`🗑️ Ejecutando cancelar_solicitud_vacaciones con parámetros:`, parametros);
                 return await this.cancelarSolicitudVacaciones(parametros, context, userId);
+
+            case 'consultar_solicitudes_dependientes':
+                console.log(`📊 Ejecutando consultar_solicitudes_dependientes`);
+                return await this.consultarSolicitudesDependientes(context, userId);
+
+            case 'autorizar_solicitud_dependiente':
+                console.log(`✅ Ejecutando autorizar_solicitud_dependiente con parámetros:`, parametros);
+                return await this.autorizarSolicitudDependiente(parametros, context, userId);
+
+            case 'rechazar_solicitud_dependiente':
+                console.log(`❌ Ejecutando rechazar_solicitud_dependiente con parámetros:`, parametros);
+                return await this.rechazarSolicitudDependiente(parametros, context, userId);
 
             default:
                 throw new Error(`Herramienta desconocida: ${nombre}`);
@@ -1558,6 +1621,516 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             });
             return [];
         }
+    }
+
+    /**
+     * Consulta solicitudes pendientes de aprobación de dependientes
+     * @param {Object} context - Contexto del bot
+     * @param {string} userId - ID del usuario
+     * @returns {Object} - Resultado con tarjeta de solicitudes dependientes
+     */
+    async consultarSolicitudesDependientes(context, userId) {
+        try {
+            console.log('📈 Consultando solicitudes de dependientes...');
+            
+            // Obtener token del usuario autenticado
+            const bot = global.botInstance;
+            let userToken = null;
+            
+            if (bot && typeof bot.getUserOAuthToken === 'function') {
+                userToken = await bot.getUserOAuthToken(context, userId);
+                console.log(`🔑 Token de usuario obtenido: ${userToken ? 'SÍ' : 'NO'}`);
+            } else {
+                console.error('❌ No se pudo obtener instancia del bot o método getUserOAuthToken');
+            }
+            
+            if (!userToken) {
+                throw new Error('TOKEN_REQUIRED');
+            }
+            
+            const authHeader = `Bearer ${userToken}`;
+            console.log(`📡 Consultando solicitudes de dependientes...`);
+            
+            const response = await axios.get(
+                'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/dependientes',
+                {
+                    headers: {
+                        'Authorization': authHeader
+                    },
+                    timeout: 10000
+                }
+            );
+            
+            console.log(`✅ Respuesta de API de dependientes (status: ${response.status})`);
+            console.log(`📊 Datos recibidos:`, JSON.stringify(response.data, null, 2));
+            
+            if (!response.data || response.data.length === 0) {
+                return `📊 **No tienes solicitudes pendientes de aprobación**\n\n` +
+                       `ℹ️ No hay solicitudes de vacaciones de tus reportes directos esperando tu aprobación.`;
+            }
+            
+            // Crear tarjeta con tabla de solicitudes dependientes
+            const solicitudesCard = this.crearTarjetaSolicitudesDependientes(response.data);
+            
+            return {
+                textContent: `📈 **Solicitudes Pendientes de Aprobación**\n\nTus reportes directos tienen las siguientes solicitudes esperando tu decisión:`,
+                card: solicitudesCard
+            };
+            
+        } catch (error) {
+            console.error('❌ Error consultando solicitudes de dependientes:', {
+                message: error.message,
+                status: error.response?.status,
+                statusText: error.response?.statusText,
+                data: error.response?.data
+            });
+            
+            if (error.message === 'TOKEN_REQUIRED') {
+                throw error;
+            }
+            
+            if (error.response?.status === 401) {
+                return `❌ **Error de autenticación (401)**\n\n` +
+                       `**Problema**: Token de usuario inválido o expirado\n` +
+                       `**Solución**: Intenta hacer logout y login nuevamente`;
+            }
+            
+            if (error.response?.status === 403) {
+                return `❌ **Sin permisos (403)**\n\n` +
+                       `**Problema**: No tienes permisos para consultar solicitudes de dependientes\n` +
+                       `**Posible causa**: No eres supervisor o jefe de área`;
+            }
+            
+            return `❌ **Error al consultar solicitudes de dependientes**: ${error.message}`;
+        }
+    }
+
+    /**
+     * Autoriza una solicitud de vacaciones de un dependiente
+     * @param {Object} parametros - Parámetros de la función
+     * @param {Object} context - Contexto del bot
+     * @param {string} userId - ID del usuario
+     * @returns {string} - Resultado de la autorización
+     */
+    async autorizarSolicitudDependiente(parametros, context, userId) {
+        try {
+            console.log('✅ Autorizando solicitud de dependiente...', parametros);
+            
+            // Obtener token del usuario autenticado
+            const bot = global.botInstance;
+            let userToken = null;
+            
+            if (bot && typeof bot.getUserOAuthToken === 'function') {
+                userToken = await bot.getUserOAuthToken(context, userId);
+                console.log(`🔑 Token de usuario obtenido: ${userToken ? 'SÍ' : 'NO'}`);
+            } else {
+                console.error('❌ No se pudo obtener instancia del bot o método getUserOAuthToken');
+            }
+            
+            if (!userToken) {
+                throw new Error('TOKEN_REQUIRED');
+            }
+            
+            let idSolicitud = parametros.idSolicitud;
+            
+            // Si no se proporcionó ID, buscar por nombre del empleado
+            if (!idSolicitud && parametros.nombreEmpleado) {
+                console.log(`🔍 Buscando solicitud por nombre: ${parametros.nombreEmpleado}`);
+                idSolicitud = await this.buscarSolicitudDependientePorNombre(parametros.nombreEmpleado, userToken);
+            }
+            
+            if (!idSolicitud) {
+                return `❌ **No se pudo identificar la solicitud a autorizar**\n\n` +
+                       `💡 Especifica el ID de la solicitud o el nombre del empleado`;
+            }
+            
+            // Realizar la autorización
+            console.log(`📤 Enviando autorización para solicitud ID: ${idSolicitud}`);
+            const authHeader = `Bearer ${userToken}`;
+            const autorizarUrl = `https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/${idSolicitud}/autorizar`;
+            console.log(`🎯 URL de autorización: ${autorizarUrl}`);
+            
+            const response = await axios.put(
+                autorizarUrl,
+                {},
+                {
+                    headers: {
+                        'Authorization': authHeader,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 10000
+                }
+            );
+            
+            console.log(`✅ Solicitud autorizada exitosamente (status: ${response.status})`);
+            console.log(`📊 Respuesta de autorización:`, JSON.stringify(response.data, null, 2));
+            
+            // Formatear respuesta
+            if (response.data && response.data.message) {
+                return `✅ **Solicitud autorizada exitosamente**\n\n${response.data.message}`;
+            } else {
+                return `✅ **Solicitud autorizada exitosamente**\n\nLa solicitud de vacaciones ha sido aprobada.`;
+            }
+            
+        } catch (error) {
+            console.error('❌ Error autorizando solicitud:', {
+                message: error.message,
+                status: error.response?.status,
+                statusText: error.response?.statusText,
+                data: error.response?.data
+            });
+            
+            if (error.message === 'TOKEN_REQUIRED') {
+                throw error;
+            }
+            
+            return this.manejarErrorAprobacion(error, 'autorizar');
+        }
+    }
+
+    /**
+     * Rechaza una solicitud de vacaciones de un dependiente
+     * @param {Object} parametros - Parámetros de la función
+     * @param {Object} context - Contexto del bot
+     * @param {string} userId - ID del usuario
+     * @returns {string} - Resultado del rechazo
+     */
+    async rechazarSolicitudDependiente(parametros, context, userId) {
+        try {
+            console.log('❌ Rechazando solicitud de dependiente...', parametros);
+            
+            // Obtener token del usuario autenticado
+            const bot = global.botInstance;
+            let userToken = null;
+            
+            if (bot && typeof bot.getUserOAuthToken === 'function') {
+                userToken = await bot.getUserOAuthToken(context, userId);
+                console.log(`🔑 Token de usuario obtenido: ${userToken ? 'SÍ' : 'NO'}`);
+            } else {
+                console.error('❌ No se pudo obtener instancia del bot o método getUserOAuthToken');
+            }
+            
+            if (!userToken) {
+                throw new Error('TOKEN_REQUIRED');
+            }
+            
+            let idSolicitud = parametros.idSolicitud;
+            
+            // Si no se proporcionó ID, buscar por nombre del empleado
+            if (!idSolicitud && parametros.nombreEmpleado) {
+                console.log(`🔍 Buscando solicitud por nombre: ${parametros.nombreEmpleado}`);
+                idSolicitud = await this.buscarSolicitudDependientePorNombre(parametros.nombreEmpleado, userToken);
+            }
+            
+            if (!idSolicitud) {
+                return `❌ **No se pudo identificar la solicitud a rechazar**\n\n` +
+                       `💡 Especifica el ID de la solicitud o el nombre del empleado`;
+            }
+            
+            // Realizar el rechazo
+            console.log(`📤 Enviando rechazo para solicitud ID: ${idSolicitud}`);
+            const authHeader = `Bearer ${userToken}`;
+            const rechazarUrl = `https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/${idSolicitud}/rechazar`;
+            console.log(`🎯 URL de rechazo: ${rechazarUrl}`);
+            
+            const response = await axios.put(
+                rechazarUrl,
+                {},
+                {
+                    headers: {
+                        'Authorization': authHeader,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 10000
+                }
+            );
+            
+            console.log(`✅ Solicitud rechazada exitosamente (status: ${response.status})`);
+            console.log(`📊 Respuesta de rechazo:`, JSON.stringify(response.data, null, 2));
+            
+            // Formatear respuesta
+            if (response.data && response.data.message) {
+                return `❌ **Solicitud rechazada**\n\n${response.data.message}`;
+            } else {
+                return `❌ **Solicitud rechazada**\n\nLa solicitud de vacaciones ha sido rechazada.`;
+            }
+            
+        } catch (error) {
+            console.error('❌ Error rechazando solicitud:', {
+                message: error.message,
+                status: error.response?.status,
+                statusText: error.response?.statusText,
+                data: error.response?.data
+            });
+            
+            if (error.message === 'TOKEN_REQUIRED') {
+                throw error;
+            }
+            
+            return this.manejarErrorAprobacion(error, 'rechazar');
+        }
+    }
+
+    /**
+     * Busca una solicitud de dependiente por nombre del empleado
+     * @param {string} nombreEmpleado - Nombre del empleado
+     * @param {string} userToken - Token del usuario
+     * @returns {string|null} - ID de la solicitud o null
+     */
+    async buscarSolicitudDependientePorNombre(nombreEmpleado, userToken) {
+        try {
+            console.log(`🔍 Buscando solicitud de dependiente por nombre: ${nombreEmpleado}`);
+            
+            const authHeader = `Bearer ${userToken}`;
+            const response = await axios.get(
+                'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/dependientes',
+                {
+                    headers: {
+                        'Authorization': authHeader
+                    },
+                    timeout: 10000
+                }
+            );
+            
+            const solicitudes = response.data || [];
+            console.log(`📊 Solicitudes de dependientes encontradas: ${solicitudes.length}`);
+            
+            // Buscar por nombre (comparación flexible)
+            const solicitudEncontrada = solicitudes.find(solicitud => 
+                solicitud.nombreSocio && 
+                solicitud.nombreSocio.toLowerCase().includes(nombreEmpleado.toLowerCase())
+            );
+            
+            if (solicitudEncontrada) {
+                console.log(`✅ Solicitud encontrada: ${solicitudEncontrada.id} para ${solicitudEncontrada.nombreSocio}`);
+                return solicitudEncontrada.id;
+            } else {
+                console.log(`❌ No se encontró solicitud para el empleado: ${nombreEmpleado}`);
+                return null;
+            }
+            
+        } catch (error) {
+            console.error('❌ Error buscando solicitud por nombre:', error.message);
+            return null;
+        }
+    }
+
+    /**
+     * Maneja errores de aprobación/rechazo
+     * @param {Error} error - Error ocurrido
+     * @param {string} accion - Acción que se estaba realizando
+     * @returns {string} - Mensaje de error formateado
+     */
+    manejarErrorAprobacion(error, accion) {
+        if (error.response?.status === 400) {
+            const errorData = error.response.data;
+            let errorMessage = `❌ **No se puede ${accion} la solicitud**\n\n`;
+            
+            if (errorData && errorData.message) {
+                errorMessage += `**Razón**: ${errorData.message}\n\n`;
+            }
+            
+            errorMessage += `**Posibles causas**:\n`;
+            errorMessage += `• La solicitud ya fue procesada\n`;
+            errorMessage += `• No tienes permisos para ${accion} esta solicitud\n`;
+            errorMessage += `• La solicitud no está en estado pendiente\n\n`;
+            errorMessage += `**Solución**: Verifica el estado de la solicitud`;
+            
+            return errorMessage;
+        }
+        
+        if (error.response?.status === 401) {
+            return `❌ **Error de autenticación (401)**\n\n` +
+                   `**Problema**: Token de usuario inválido o expirado\n` +
+                   `**Solución**: Intenta hacer logout y login nuevamente`;
+        }
+        
+        if (error.response?.status === 403) {
+            return `❌ **Sin permisos (403)**\n\n` +
+                   `**Problema**: No tienes permisos para ${accion} esta solicitud\n` +
+                   `**Posible causa**: No eres el supervisor directo del empleado`;
+        }
+        
+        if (error.response?.status === 404) {
+            return `❌ **Solicitud no encontrada (404)**\n\n` +
+                   `La solicitud que intentas ${accion} no existe o ya fue procesada.`;
+        }
+        
+        return `❌ **Error al ${accion} solicitud**: ${error.message}`;
+    }
+
+    /**
+     * Crea tarjeta adaptativa con tabla de solicitudes de dependientes
+     * @param {Array} solicitudes - Lista de solicitudes
+     * @returns {Object} - Tarjeta adaptativa
+     */
+    crearTarjetaSolicitudesDependientes(solicitudes) {
+        const { CardFactory } = require('botbuilder');
+        
+        // Crear filas de la tabla
+        const filas = solicitudes.map(solicitud => {
+            const fechaSalida = new Date(solicitud.fechaSalida).toLocaleDateString('es-MX', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric'
+            });
+            const fechaRegreso = new Date(solicitud.fechaRegreso).toLocaleDateString('es-MX', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric'
+            });
+            
+            return {
+                type: 'TableRow',
+                cells: [
+                    {
+                        type: 'TableCell',
+                        items: [{
+                            type: 'TextBlock',
+                            text: solicitud.nombreSocio || 'N/A',
+                            size: 'Small',
+                            weight: 'Bolder'
+                        }]
+                    },
+                    {
+                        type: 'TableCell',
+                        items: [{
+                            type: 'TextBlock',
+                            text: solicitud.tipoSolicitud || 'Vacaciones',
+                            size: 'Small'
+                        }]
+                    },
+                    {
+                        type: 'TableCell',
+                        items: [{
+                            type: 'TextBlock',
+                            text: `${fechaSalida} - ${fechaRegreso}`,
+                            size: 'Small'
+                        }]
+                    },
+                    {
+                        type: 'TableCell',
+                        items: [{
+                            type: 'TextBlock',
+                            text: `${solicitud.cantidadDias} días`,
+                            size: 'Small',
+                            horizontalAlignment: 'Center'
+                        }]
+                    },
+                    {
+                        type: 'TableCell',
+                        items: [{
+                            type: 'ActionSet',
+                            actions: [
+                                {
+                                    type: 'Action.Submit',
+                                    title: '✅ Aprobar',
+                                    data: {
+                                        action: 'autorizar_solicitud',
+                                        idSolicitud: solicitud.id,
+                                        nombreEmpleado: solicitud.nombreSocio
+                                    },
+                                    style: 'positive'
+                                },
+                                {
+                                    type: 'Action.Submit',
+                                    title: '❌ Rechazar',
+                                    data: {
+                                        action: 'rechazar_solicitud',
+                                        idSolicitud: solicitud.id,
+                                        nombreEmpleado: solicitud.nombreSocio
+                                    },
+                                    style: 'destructive'
+                                }
+                            ]
+                        }]
+                    }
+                ]
+            };
+        });
+        
+        const adaptiveCard = {
+            type: 'AdaptiveCard',
+            $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+            version: '1.3',
+            body: [
+                {
+                    type: 'TextBlock',
+                    text: '📈 Solicitudes Pendientes de Aprobación',
+                    size: 'Large',
+                    weight: 'Bolder',
+                    color: 'Accent'
+                },
+                {
+                    type: 'Table',
+                    columns: [
+                        { width: 2 },
+                        { width: 1 },
+                        { width: 2 },
+                        { width: 1 },
+                        { width: 2 }
+                    ],
+                    rows: [
+                        {
+                            type: 'TableRow',
+                            style: 'accent',
+                            cells: [
+                                {
+                                    type: 'TableCell',
+                                    items: [{
+                                        type: 'TextBlock',
+                                        text: 'Empleado',
+                                        weight: 'Bolder',
+                                        size: 'Small'
+                                    }]
+                                },
+                                {
+                                    type: 'TableCell',
+                                    items: [{
+                                        type: 'TextBlock',
+                                        text: 'Tipo',
+                                        weight: 'Bolder',
+                                        size: 'Small'
+                                    }]
+                                },
+                                {
+                                    type: 'TableCell',
+                                    items: [{
+                                        type: 'TextBlock',
+                                        text: 'Fechas',
+                                        weight: 'Bolder',
+                                        size: 'Small'
+                                    }]
+                                },
+                                {
+                                    type: 'TableCell',
+                                    items: [{
+                                        type: 'TextBlock',
+                                        text: 'Días',
+                                        weight: 'Bolder',
+                                        size: 'Small',
+                                        horizontalAlignment: 'Center'
+                                    }]
+                                },
+                                {
+                                    type: 'TableCell',
+                                    items: [{
+                                        type: 'TextBlock',
+                                        text: 'Acciones',
+                                        weight: 'Bolder',
+                                        size: 'Small',
+                                        horizontalAlignment: 'Center'
+                                    }]
+                                }
+                            ]
+                        },
+                        ...filas
+                    ]
+                }
+            ]
+        };
+        
+        return CardFactory.adaptiveCard(adaptiveCard);
     }
 
     /**

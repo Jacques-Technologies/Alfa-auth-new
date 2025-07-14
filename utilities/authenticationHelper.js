@@ -8,7 +8,10 @@ const { CardFactory } = require('botbuilder');
 const TOOLS_REQUIRING_AUTH = [
     'consultar_mis_solicitudes',
     'consultar_informacion_empleado',
-    'cancelar_solicitud_vacaciones'
+    'cancelar_solicitud_vacaciones',
+    'consultar_solicitudes_dependientes',
+    'autorizar_solicitud_dependiente',
+    'rechazar_solicitud_dependiente'
 ];
 
 /**
@@ -84,7 +87,10 @@ function generateLoginCard(toolName, toolDescription) {
     const toolDescriptions = {
         'consultar_mis_solicitudes': 'consultar tus solicitudes de vacaciones',
         'consultar_informacion_empleado': 'obtener tu información como empleado',
-        'cancelar_solicitud_vacaciones': 'cancelar una solicitud de vacaciones'
+        'cancelar_solicitud_vacaciones': 'cancelar una solicitud de vacaciones',
+        'consultar_solicitudes_dependientes': 'consultar solicitudes de tus reportes directos',
+        'autorizar_solicitud_dependiente': 'autorizar solicitudes de tus empleados',
+        'rechazar_solicitud_dependiente': 'rechazar solicitudes de tus empleados'
     };
     
     const friendlyDescription = toolDescriptions[toolName] || toolDescription || toolName;

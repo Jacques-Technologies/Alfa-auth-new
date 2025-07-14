@@ -21,6 +21,11 @@ async function handleCardSubmit(context, submitData, getUserOAuthToken, handleTo
         if (submitData.action === 'Confirmar Vacaciones' || submitData.action === 'Cancelar Vacaciones') {
             return await handleVacationConfirmation(context, submitData, getUserOAuthToken, isTokenValid);
         }
+        
+        // Verificar si es autorización o rechazo de solicitudes dependientes
+        if (submitData.action === 'autorizar_solicitud' || submitData.action === 'rechazar_solicitud') {
+            return await handleDependentRequestAction(context, submitData, openaiService);
+        }
 
         // Validar datos básicos
         const { action, method, url, ...fieldData } = submitData;
@@ -550,6 +555,60 @@ async function handleVacationConfirmation(context, submitData, getUserOAuthToken
     }
 }
 
+/**
+ * Maneja acciones de autorización/rechazo de solicitudes dependientes
+ */
+async function handleDependentRequestAction(context, submitData, openaiService) {
+    const userId = context.activity.from.id;
+    
+    try {
+        console.log(`[${userId}] Procesando acción de dependiente:`, submitData);
+        
+        const { action, idSolicitud, nombreEmpleado } = submitData;
+        
+        if (!idSolicitud) {
+            await context.sendActivity('❌ **Error**: No se especificó el ID de la solicitud.');
+            return;
+        }
+        
+        await context.sendActivity({ type: 'typing' });
+        
+        let response;
+        if (action === 'autorizar_solicitud') {
+            await context.sendActivity(`✅ **Autorizando solicitud de ${nombreEmpleado}...**`);
+            response = await openaiService.autorizarSolicitudDependiente(
+                { idSolicitud, nombreEmpleado }, 
+                context, 
+                userId
+            );
+        } else if (action === 'rechazar_solicitud') {
+            await context.sendActivity(`❌ **Rechazando solicitud de ${nombreEmpleado}...**`);
+            response = await openaiService.rechazarSolicitudDependiente(
+                { idSolicitud, nombreEmpleado }, 
+                context, 
+                userId
+            );
+        } else {
+            await context.sendActivity('❌ **Error**: Acción no reconocida.');
+            return;
+        }
+        
+        // Enviar respuesta
+        if (typeof response === 'string') {
+            await context.sendActivity(response);
+        } else {
+            await context.sendActivity('✅ Acción completada exitosamente.');
+        }
+        
+        // Ofrecer refrescar la lista
+        await context.sendActivity('🔄 Puedes escribir "consultar solicitudes pendientes" para ver la lista actualizada.');
+        
+    } catch (error) {
+        console.error(`[${userId}] Error en handleDependentRequestAction:`, error);
+        await context.sendActivity('❌ Error procesando la acción. Intenta nuevamente.');
+    }
+}
+
 module.exports = {
     handleCardSubmit,
     handleVacationGuideSubmit,
@@ -557,5 +616,6 @@ module.exports = {
     processUrlParameters,
     handleApiError,
     validateSubmitData,
-    sanitizeInputData
+    sanitizeInputData,
+    handleDependentRequestAction
 };
