@@ -537,11 +537,13 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 const resultado = await this.ejecutarHerramienta(name, parametros, context, userId);
                 
                 // Manejar respuestas de autenticación
-                if (resultado && resultado.type === 'auth_required') {
-                    console.log('🔒 Retornando respuesta de autenticación requerida');
+                if (resultado && resultado.type === 'oauth_required') {
+                    console.log('🔒 Activando diálogo OAuth directamente');
                     return {
-                        type: 'text',
-                        content: resultado.content
+                        type: 'oauth_required',
+                        content: resultado.content,
+                        toolName: resultado.toolName,
+                        friendlyDescription: resultado.friendlyDescription
                     };
                 }
                 
@@ -617,15 +619,10 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
      * Ejecuta herramienta específica con validación de autenticación
      */
     async ejecutarHerramienta(nombre, parametros, context = null, userId = null) {
-        console.log(`🔧 ejecutarHerramienta: ${nombre}, context: ${!!context}, userId: ${!!userId}`);
-        
         // Validar autenticación si la herramienta la requiere
         if (context && userId) {
             const bot = global.botInstance;
-            console.log(`🔧 Bot instance disponible: ${!!bot}`);
-            console.log(`🔧 Métodos disponibles: getUserOAuthToken=${typeof bot.getUserOAuthToken}, isTokenValid=${typeof bot.isTokenValid}`);
             if (bot && typeof bot.getUserOAuthToken === 'function' && typeof bot.isTokenValid === 'function') {
-                console.log(`🔧 Validando autenticación para herramienta: ${nombre}`);
                 const authResult = await checkAuthenticationForTool(
                     nombre, 
                     context, 
@@ -634,17 +631,11 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                     bot.isTokenValid.bind(bot)
                 );
                 
-                console.log(`🔧 Resultado de autenticación: canExecute=${authResult.canExecute}`);
-                
                 if (!authResult.canExecute) {
-                    console.log(`🔒 Herramienta ${nombre} bloqueada por falta de autenticación`);
+                    console.log(`🔒 Herramienta ${nombre} requiere autenticación - activando OAuth`);
                     return authResult.response;
                 }
-            } else {
-                console.log(`🔧 Bot instance no disponible o métodos faltantes`);
             }
-        } else {
-            console.log(`🔧 Context o userId no disponibles - saltando validación de auth`);
         }
         
         switch (nombre) {

@@ -73,10 +73,10 @@ async function validateUserToken(context, userId, getUserOAuthToken, isTokenVali
 }
 
 /**
- * Genera una respuesta que solicita autenticación
+ * Genera una respuesta que activa directamente el diálogo OAuth
  * @param {string} toolName - Nombre de la herramienta que requiere auth
  * @param {string} toolDescription - Descripción de la herramienta
- * @returns {Object} - Respuesta que solicita autenticación
+ * @returns {Object} - Respuesta que activa OAuth directamente
  */
 function generateLoginCard(toolName, toolDescription) {
     // Mapeo de descripciones amigables para herramientas
@@ -88,8 +88,8 @@ function generateLoginCard(toolName, toolDescription) {
     const friendlyDescription = toolDescriptions[toolName] || toolDescription || toolName;
     
     return {
-        type: 'auth_required',
-        content: `🔐 **Autenticación requerida**\n\nPara **${friendlyDescription}**, necesitas autenticarte primero.\n\n📝 Escribe **\`login\`** para iniciar sesión con tu cuenta corporativa.`,
+        type: 'oauth_required',
+        content: `🔐 **Autenticación requerida**\n\nPara **${friendlyDescription}**, necesitas autenticarte primero.\n\n⏳ Iniciando proceso de autenticación...`,
         toolName: toolName,
         friendlyDescription: friendlyDescription
     };

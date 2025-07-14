@@ -252,7 +252,19 @@ class TeamsBot extends DialogBot {
      */
     async sendOpenAIResponse(context, response, conversationId) {
         try {
-            if (response.type === 'card') {
+            if (response.type === 'oauth_required') {
+                console.log('🔐 Activando diálogo OAuth por demanda de herramienta');
+                
+                // Enviar mensaje informativo
+                await context.sendActivity(response.content);
+                
+                // Activar diálogo OAuth directamente
+                await this.dialog.run(context, this.dialogState);
+                
+                // Guardar mensaje del bot
+                await this.conversationService.saveMessage(response.content, conversationId, 'bot');
+                
+            } else if (response.type === 'card') {
                 if (response.content) {
                     await context.sendActivity(response.content);
                 }
