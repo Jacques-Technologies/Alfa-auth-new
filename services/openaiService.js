@@ -1406,19 +1406,25 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             
             if (error.response?.status === 400) {
                 const errorData = error.response.data;
-                let errorMessage = `❌ **Error en la petición (400)**\n\n`;
+                let errorMessage = `❌ **No se puede cancelar la solicitud**\n\n`;
                 
                 if (errorData && errorData.message) {
                     errorMessage += `**Razón**: ${errorData.message}\n\n`;
+                    
+                    // Agregar información contextual basada en el mensaje
+                    if (errorData.message.includes('autorizada')) {
+                        errorMessage += `📝 **Explicación**: Las solicitudes autorizadas no pueden ser canceladas por el sistema.\n\n`;
+                        errorMessage += `📞 **Solución**: Contacta directamente a Recursos Humanos para solicitar la cancelación.\n\n`;
+                        errorMessage += `📊 **Tip**: Puedes consultar tus solicitudes para ver cuáles están pendientes y pueden ser canceladas.`;
+                    }
                 } else {
                     errorMessage += `**Razón**: Datos inválidos en la petición\n\n`;
+                    errorMessage += `**Posibles causas**:\n`;
+                    errorMessage += `• La solicitud no puede ser cancelada (ya procesada, muy próxima, etc.)\n`;
+                    errorMessage += `• El ID de la solicitud es inválido\n`;
+                    errorMessage += `• La fecha de cancelación ha expirado\n\n`;
+                    errorMessage += `**Solución**: Contacta a Recursos Humanos para ayuda`;
                 }
-                
-                errorMessage += `**Posibles causas**:\n`;
-                errorMessage += `• La solicitud no puede ser cancelada (ya procesada, muy próxima, etc.)\n`;
-                errorMessage += `• El ID de la solicitud es inválido\n`;
-                errorMessage += `• La fecha de cancelación ha expirado\n\n`;
-                errorMessage += `**Solución**: Contacta a Recursos Humanos para ayuda`;
                 
                 return errorMessage;
             }
@@ -1469,17 +1475,40 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             const fechaRef = new Date(fechaReferencia);
             console.log(`🎯 Buscando solicitud que contenga la fecha: ${fechaRef.toISOString()}`);
             
-            const solicitudEncontrada = solicitudes.find(solicitud => {
+            // Encontrar todas las solicitudes que contengan la fecha
+            const solicitudesEncontradas = solicitudes.filter(solicitud => {
                 const fechaSalida = new Date(solicitud.fechaSalida);
                 const fechaRegreso = new Date(solicitud.fechaRegreso);
                 
+                const enRango = fechaRef >= fechaSalida && fechaRef <= fechaRegreso;
+                
                 console.log(`🔍 Comparando con solicitud ${solicitud.id}:`, {
+                    tipo: solicitud.tipoSolicitud,
+                    estatus: solicitud.estatus,
                     fechaSalida: fechaSalida.toISOString(),
                     fechaRegreso: fechaRegreso.toISOString(),
-                    enRango: fechaRef >= fechaSalida && fechaRef <= fechaRegreso
+                    enRango: enRango
                 });
                 
-                return fechaRef >= fechaSalida && fechaRef <= fechaRegreso;
+                return enRango;
+            });
+            
+            console.log(`📊 Solicitudes encontradas para la fecha: ${solicitudesEncontradas.length}`);
+            
+            if (solicitudesEncontradas.length === 0) {
+                console.log('❌ No se encontraron solicitudes para la fecha especificada');
+                return null;
+            }
+            
+            // Priorizar solicitudes PENDIENTES sobre AUTORIZADAS
+            const solicitudPendiente = solicitudesEncontradas.find(s => s.estatus === 'PENDIENTE');
+            const solicitudEncontrada = solicitudPendiente || solicitudesEncontradas[0];
+            
+            console.log(`🎯 Solicitud seleccionada:`, {
+                id: solicitudEncontrada.id,
+                tipo: solicitudEncontrada.tipoSolicitud,
+                estatus: solicitudEncontrada.estatus,
+                razon: solicitudPendiente ? 'Seleccionada por ser PENDIENTE' : 'Primera encontrada'
             });
             
             if (solicitudEncontrada) {
