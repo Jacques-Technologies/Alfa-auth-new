@@ -164,8 +164,7 @@ class TeamsBot extends DialogBot {
             // 3. Limpiar token del UserTokenClient (Bot Framework) - FORZAR LIMPIEZA
             try {
                 let userTokenClient = context.turnState.get(context.adapter.UserTokenClientKey) ||
-                                    context.turnState.get('UserTokenClient') ||
-                                    context.adapter.createUserTokenClient();
+                                    context.turnState.get('UserTokenClient');
                 
                 const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
                 
@@ -413,8 +412,7 @@ class TeamsBot extends DialogBot {
 
             // Obtener del UserTokenClient (intentar múltiples formas)
             let userTokenClient = context.turnState.get(context.adapter.UserTokenClientKey) ||
-                                context.turnState.get('UserTokenClient') ||
-                                context.adapter.createUserTokenClient();
+                                context.turnState.get('UserTokenClient');
             
             const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
             console.log(`[${userId}] getUserOAuthToken - UserTokenClient disponible: ${!!userTokenClient}, connectionName: ${connectionName}`);

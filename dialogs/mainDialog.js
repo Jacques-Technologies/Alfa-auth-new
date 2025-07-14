@@ -128,6 +128,9 @@ class MainDialog extends LogoutDialog {
         try {
             console.log(`[${userId}] Mostrando OAuth prompt`);
             
+            // FORZAR LIMPIEZA DE TOKEN ANTES DE MOSTRAR PROMPT
+            await this.forceTokenCleanup(stepContext.context, userId);
+            
             await stepContext.context.sendActivity(
                 '🔐 **Autenticación Requerida**\n\n' +
                 'Inicia sesión con tu cuenta corporativa para continuar.'
@@ -244,6 +247,35 @@ class MainDialog extends LogoutDialog {
         console.log(`[${userId}] Diálogo finalizado`);
         
         return await stepContext.endDialog(stepContext.result);
+    }
+
+    /**
+     * Fuerza limpieza de token antes de mostrar OAuth prompt
+     */
+    async forceTokenCleanup(context, userId) {
+        try {
+            console.log(`[${userId}] Forzando limpieza de token antes de OAuth prompt`);
+            
+            const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
+            
+            // Intentar limpiar token del UserTokenClient
+            const userTokenClient = context.turnState.get(context.adapter.UserTokenClientKey) ||
+                                  context.turnState.get('UserTokenClient');
+            
+            if (userTokenClient && connectionName) {
+                try {
+                    await userTokenClient.signOutUser(userId, connectionName, context.activity.channelId);
+                    console.log(`[${userId}] Token limpiado del UserTokenClient antes de OAuth prompt`);
+                } catch (error) {
+                    console.warn(`[${userId}] Error limpiando token del UserTokenClient:`, error.message);
+                }
+            } else {
+                console.log(`[${userId}] UserTokenClient no disponible para limpieza`);
+            }
+            
+        } catch (error) {
+            console.error(`[${userId}] Error en forceTokenCleanup:`, error);
+        }
     }
 
     /**
