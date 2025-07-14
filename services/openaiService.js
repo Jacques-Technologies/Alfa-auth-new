@@ -1360,9 +1360,13 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             }
             
             // Realizar la cancelación
+            console.log(`📤 Enviando petición de cancelación para solicitud ID: ${idSolicitud}`);
             const authHeader = `Bearer ${userToken}`;
+            const cancelUrl = `https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/${idSolicitud}/cancelar`;
+            console.log(`🎯 URL de cancelación: ${cancelUrl}`);
+            
             const response = await axios.put(
-                `https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/${idSolicitud}/cancelar`,
+                cancelUrl,
                 {},
                 {
                     headers: {
@@ -1374,6 +1378,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             );
             
             console.log(`✅ Solicitud cancelada exitosamente (status: ${response.status})`);
+            console.log(`📊 Respuesta de cancelación:`, JSON.stringify(response.data, null, 2));
             
             // Formatear respuesta
             if (response.data && response.data.message) {
@@ -1383,10 +1388,39 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             }
             
         } catch (error) {
-            console.error('❌ Error cancelando solicitud:', error.message);
+            console.error('❌ Error cancelando solicitud:', {
+                message: error.message,
+                status: error.response?.status,
+                statusText: error.response?.statusText,
+                data: error.response?.data,
+                config: {
+                    method: error.config?.method,
+                    url: error.config?.url,
+                    headers: error.config?.headers ? 'INCLUIDOS' : 'NO INCLUIDOS'
+                }
+            });
             
             if (error.message === 'TOKEN_REQUIRED') {
                 throw error;
+            }
+            
+            if (error.response?.status === 400) {
+                const errorData = error.response.data;
+                let errorMessage = `❌ **Error en la petición (400)**\n\n`;
+                
+                if (errorData && errorData.message) {
+                    errorMessage += `**Razón**: ${errorData.message}\n\n`;
+                } else {
+                    errorMessage += `**Razón**: Datos inválidos en la petición\n\n`;
+                }
+                
+                errorMessage += `**Posibles causas**:\n`;
+                errorMessage += `• La solicitud no puede ser cancelada (ya procesada, muy próxima, etc.)\n`;
+                errorMessage += `• El ID de la solicitud es inválido\n`;
+                errorMessage += `• La fecha de cancelación ha expirado\n\n`;
+                errorMessage += `**Solución**: Contacta a Recursos Humanos para ayuda`;
+                
+                return errorMessage;
             }
             
             if (error.response?.status === 401) {
@@ -1396,7 +1430,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             }
             
             if (error.response?.status === 404) {
-                return `❌ **Solicitud no encontrada**\n\n` +
+                return `❌ **Solicitud no encontrada (404)**\n\n` +
                        `La solicitud que intentas cancelar no existe o ya fue procesada.`;
             }
             
@@ -1412,21 +1446,52 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
      */
     async buscarSolicitudPorFecha(fechaReferencia, userToken) {
         try {
+            console.log(`🔍 Obteniendo solicitudes para buscar por fecha: ${fechaReferencia}`);
             const solicitudes = await this.obtenerSolicitudesUsuario(userToken);
+            console.log(`📋 Total de solicitudes encontradas: ${solicitudes.length}`);
+            
+            if (solicitudes.length === 0) {
+                console.log('⚠️ No hay solicitudes para buscar');
+                return null;
+            }
+            
+            // Mostrar todas las solicitudes para debugging
+            solicitudes.forEach((solicitud, index) => {
+                console.log(`📝 Solicitud ${index + 1}:`, {
+                    id: solicitud.id,
+                    fechaSalida: solicitud.fechaSalida,
+                    fechaRegreso: solicitud.fechaRegreso,
+                    estado: solicitud.estado
+                });
+            });
             
             // Buscar solicitud que contenga la fecha de referencia
             const fechaRef = new Date(fechaReferencia);
+            console.log(`🎯 Buscando solicitud que contenga la fecha: ${fechaRef.toISOString()}`);
+            
             const solicitudEncontrada = solicitudes.find(solicitud => {
                 const fechaSalida = new Date(solicitud.fechaSalida);
                 const fechaRegreso = new Date(solicitud.fechaRegreso);
                 
+                console.log(`🔍 Comparando con solicitud ${solicitud.id}:`, {
+                    fechaSalida: fechaSalida.toISOString(),
+                    fechaRegreso: fechaRegreso.toISOString(),
+                    enRango: fechaRef >= fechaSalida && fechaRef <= fechaRegreso
+                });
+                
                 return fechaRef >= fechaSalida && fechaRef <= fechaRegreso;
             });
             
-            return solicitudEncontrada ? solicitudEncontrada.id : null;
+            if (solicitudEncontrada) {
+                console.log(`✅ Solicitud encontrada: ${solicitudEncontrada.id}`);
+                return solicitudEncontrada.id;
+            } else {
+                console.log('❌ No se encontró solicitud para la fecha especificada');
+                return null;
+            }
             
         } catch (error) {
-            console.error('Error buscando solicitud por fecha:', error.message);
+            console.error('❌ Error buscando solicitud por fecha:', error.message);
             return null;
         }
     }
@@ -1438,6 +1503,7 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
      */
     async obtenerSolicitudesUsuario(userToken) {
         try {
+            console.log('📡 Consultando solicitudes del usuario...');
             const authHeader = `Bearer ${userToken}`;
             const response = await axios.get(
                 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/vac/solicitudes/empleado',
@@ -1449,10 +1515,18 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
                 }
             );
             
+            console.log(`✅ Respuesta de API de solicitudes (status: ${response.status})`);
+            console.log(`📊 Datos recibidos:`, JSON.stringify(response.data, null, 2));
+            
             return response.data || [];
             
         } catch (error) {
-            console.error('Error obteniendo solicitudes:', error.message);
+            console.error('❌ Error obteniendo solicitudes:', {
+                message: error.message,
+                status: error.response?.status,
+                statusText: error.response?.statusText,
+                data: error.response?.data
+            });
             return [];
         }
     }
