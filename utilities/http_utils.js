@@ -128,34 +128,71 @@ function calculateRetryDelay(attempt) {
  * Verifica si un token OAuth es válido
  */
 async function isTokenValid(token) {
+    console.log('🔍 [isTokenValid] Iniciando validación de token...');
+    
     if (!token || typeof token !== 'string') {
+        console.log('❌ [isTokenValid] Token inválido: vacío o no es string');
         return false;
     }
     
+    console.log(`📝 [isTokenValid] Token recibido: ${token.substring(0, 20)}...`);
+    
     try {
+        const authHeader = formatAuthHeader(token);
+        console.log(`🔑 [isTokenValid] Authorization header: ${authHeader.substring(0, 30)}...`);
+        
+        const config = {
+            headers: {
+                'Authorization': authHeader,
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            timeout: 10000,
+            validateStatus: (status) => status < 500
+        };
+        
+        console.log('📡 [isTokenValid] Enviando petición GET a:', 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/empleado');
+        console.log('📋 [isTokenValid] Headers completos:', JSON.stringify(config.headers, null, 2));
+        
         const response = await axios.get(
             'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/empleado',
-            {
-                headers: {
-                    'Authorization': formatAuthHeader(token)
-                },
-                timeout: 10000,
-                validateStatus: (status) => status < 500
-            }
+            config
         );
         
         const isValid = response.status === 200;
-        console.log(`Token validation: ${isValid ? 'VALID' : 'INVALID'} (${response.status})`);
+        console.log(`✅ [isTokenValid] Respuesta recibida - Status: ${response.status}`);
+        console.log(`📊 [isTokenValid] Headers de respuesta:`, JSON.stringify(response.headers, null, 2));
+        
+        if (!isValid) {
+            console.log(`❌ [isTokenValid] Token validation: INVALID (${response.status})`);
+            if (response.data) {
+                console.log(`💭 [isTokenValid] Respuesta del servidor:`, JSON.stringify(response.data, null, 2));
+            }
+        } else {
+            console.log('✅ [isTokenValid] Token validation: VALID');
+        }
+        
         return isValid;
         
     } catch (error) {
-        if (error.response && error.response.status === 401) {
-            console.log('Token validation: INVALID (401 Unauthorized)');
-            return false;
+        console.log('🚨 [isTokenValid] Error en la petición:', error.message);
+        
+        if (error.response) {
+            console.log(`📝 [isTokenValid] Status de error: ${error.response.status}`);
+            console.log(`📋 [isTokenValid] Headers de error:`, JSON.stringify(error.response.headers, null, 2));
+            console.log(`💭 [isTokenValid] Data de error:`, JSON.stringify(error.response.data, null, 2));
+            
+            if (error.response.status === 401) {
+                console.log('❌ [isTokenValid] Token validation: INVALID (401 Unauthorized)');
+                return false;
+            }
+        } else if (error.request) {
+            console.log('🔌 [isTokenValid] No se recibió respuesta del servidor');
+            console.log(`📝 [isTokenValid] Request config:`, JSON.stringify(error.config, null, 2));
         }
         
         // Para otros errores, asumir que el token podría ser válido
-        console.warn('Token validation error (assuming valid):', error.message);
+        console.warn('⚠️ [isTokenValid] Token validation error (assuming valid):', error.message);
         return true;
     }
 }

@@ -816,33 +816,64 @@ Fecha actual: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yy
             const bot = global.botInstance;
             let userToken = null;
             
+            console.log('🔍 [consultarInformacionEmpleado] Intentando obtener token...');
+            console.log(`📝 [consultarInformacionEmpleado] Bot instance disponible: ${!!bot}`);
+            console.log(`📝 [consultarInformacionEmpleado] getUserOAuthToken disponible: ${bot && typeof bot.getUserOAuthToken === 'function'}`);
+            
             if (bot && typeof bot.getUserOAuthToken === 'function') {
                 userToken = await bot.getUserOAuthToken(context, userId);
-                console.log(`🔑 Token de usuario obtenido: ${userToken ? 'SÍ' : 'NO'}`);
+                console.log(`🔑 [consultarInformacionEmpleado] Token obtenido: ${userToken ? 'SÍ' : 'NO'}`);
+                if (userToken) {
+                    console.log(`📊 [consultarInformacionEmpleado] Token length: ${userToken.length}`);
+                    console.log(`📊 [consultarInformacionEmpleado] Token preview: ${userToken.substring(0, 40)}...`);
+                    console.log(`📊 [consultarInformacionEmpleado] Token type: ${typeof userToken}`);
+                    
+                    // Verificar si el token tiene formato Bearer ya incluido
+                    if (userToken.startsWith('Bearer ')) {
+                        console.log('⚠️ [consultarInformacionEmpleado] Token ya incluye "Bearer " prefix');
+                    }
+                }
             } else {
-                console.error('❌ No se pudo obtener instancia del bot o método getUserOAuthToken');
+                console.error('❌ [consultarInformacionEmpleado] No se pudo obtener instancia del bot o método getUserOAuthToken');
             }
             
             if (!userToken) {
+                console.log('🚫 [consultarInformacionEmpleado] No hay token disponible, lanzando TOKEN_REQUIRED');
                 // Si no hay token, devolver error simple para que el sistema de auth bajo demanda funcione
                 throw new Error('TOKEN_REQUIRED');
             }
             
             const authHeader = `Bearer ${userToken}`;
-            console.log(`📤 Authorization header: ${authHeader.substring(0, 30)}...`);
+            console.log(`📤 [consultarInformacionEmpleado] Authorization header completo length: ${authHeader.length}`);
+            console.log(`📤 [consultarInformacionEmpleado] Authorization header preview: ${authHeader.substring(0, 50)}...`);
+            
+            const axiosConfig = {
+                headers: {
+                    'Authorization': authHeader,
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                timeout: 10000,
+                validateStatus: (status) => status < 500 // Para capturar respuestas 401
+            };
+            
+            console.log('📡 [consultarInformacionEmpleado] Configuración de axios:', JSON.stringify(axiosConfig, null, 2));
             
             const response = await axios.get(
                 'https://botapiqas-alfacorp.msappproxy.net/api/externas/sirh2bot_qas/bot/empleado',
-                {
-                    headers: {
-                        'Authorization': authHeader
-                    },
-                    timeout: 10000
-                }
+                axiosConfig
             );
             
-            console.log(`✅ Respuesta exitosa de SIRH API (status: ${response.status})`);
-            console.log(`📊 Datos del empleado recibidos:`, JSON.stringify(response.data, null, 2));
+            console.log(`✅ [consultarInformacionEmpleado] Respuesta recibida - Status: ${response.status}`);
+            
+            if (response.status === 401) {
+                console.log('❌ [consultarInformacionEmpleado] Error 401 Unauthorized');
+                console.log(`📊 [consultarInformacionEmpleado] Response headers:`, JSON.stringify(response.headers, null, 2));
+                console.log(`📊 [consultarInformacionEmpleado] Response data:`, JSON.stringify(response.data, null, 2));
+                throw new Error('TOKEN_REQUIRED');
+            }
+            
+            console.log(`📊 [consultarInformacionEmpleado] Datos del empleado recibidos:`, JSON.stringify(response.data, null, 2));
             
             // Formatear la información para una respuesta amigable
             const empleadoData = response.data;
