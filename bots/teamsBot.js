@@ -412,10 +412,30 @@ class TeamsBot extends DialogBot {
 
             // Obtener del UserTokenClient (intentar múltiples formas)
             let userTokenClient = context.turnState.get(context.adapter.UserTokenClientKey) ||
-                                context.turnState.get('UserTokenClient');
+                                context.turnState.get('UserTokenClient') ||
+                                context.adapter.getUserToken;
             
             const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
             console.log(`[${userId}] getUserOAuthToken - UserTokenClient disponible: ${!!userTokenClient}, connectionName: ${connectionName}`);
+            console.log(`[${userId}] getUserOAuthToken - Adapter keys:`, Object.keys(context.adapter));
+            console.log(`[${userId}] getUserOAuthToken - TurnState keys:`, Array.from(context.turnState.keys || []));
+
+            // Si no hay UserTokenClient pero sí adapter.getUserToken, intentar usarlo
+            if (!userTokenClient && context.adapter.getUserToken) {
+                console.log(`[${userId}] getUserOAuthToken - Usando adapter.getUserToken directamente`);
+                try {
+                    const tokenResponse = await context.adapter.getUserToken(
+                        context,
+                        connectionName
+                    );
+                    if (tokenResponse && tokenResponse.token) {
+                        console.log(`[${userId}] getUserOAuthToken - Token encontrado via ADAPTER`);
+                        return tokenResponse.token;
+                    }
+                } catch (adapterError) {
+                    console.warn(`[${userId}] Error con adapter.getUserToken:`, adapterError.message);
+                }
+            }
 
             if (userTokenClient && connectionName) {
                 try {

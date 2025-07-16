@@ -121,11 +121,16 @@ class BotServer {
      */
     async initializeBotFramework() {
         try {
-            // Crear adapter
+            // Crear adapter con configuración completa para OAuth
             this.adapter = new BotFrameworkAdapter({
                 appId: process.env.MicrosoftAppId,
-                appPassword: process.env.MicrosoftAppPassword
+                appPassword: process.env.MicrosoftAppPassword,
+                authConfig: {
+                    connectionName: process.env.connectionName || process.env.OAUTH_CONNECTION_NAME
+                }
             });
+            
+            console.log(`🔧 Adapter configurado con connectionName: ${process.env.connectionName || process.env.OAUTH_CONNECTION_NAME}`);
 
             // Configurar manejo de errores del adapter
             this.adapter.onTurnError = async (context, error) => {

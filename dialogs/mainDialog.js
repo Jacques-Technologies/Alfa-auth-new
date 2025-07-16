@@ -15,8 +15,14 @@ class MainDialog extends LogoutDialog {
         super(MAIN_DIALOG, process.env.connectionName || process.env.OAUTH_CONNECTION_NAME);
 
         const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
+        console.log(`🔧 [MainDialog] Inicializando con connectionName: ${connectionName}`);
+        
         if (!connectionName) {
             console.error('MainDialog: ERROR - connectionName no configurado');
+            console.error('Variables de entorno disponibles:', {
+                connectionName: process.env.connectionName,
+                OAUTH_CONNECTION_NAME: process.env.OAUTH_CONNECTION_NAME
+            });
             throw new Error('Configuración OAuth faltante');
         }
 
@@ -41,7 +47,7 @@ class MainDialog extends LogoutDialog {
         // Registrar globalmente para acceso desde bot
         global.mainDialogInstance = this;
 
-        console.log('MainDialog inicializado correctamente');
+        console.log(`✅ [MainDialog] Inicializado correctamente con connectionName: ${connectionName}`);
     }
 
     /**
@@ -67,25 +73,48 @@ class MainDialog extends LogoutDialog {
                 }
             }
 
-            // Evitar diálogos duplicados para el mismo usuario
-            const dialogKey = `dialog-${userId}`;
-            if (this.activeDialogs.has(dialogKey)) {
-                console.log(`[${userId}] Diálogo ya activo`);
-                return;
-            }
-
+            // Crear DialogSet y contexto
             const dialogSet = new DialogSet(accessor);
             dialogSet.add(this);
 
             const dialogContext = await dialogSet.createContext(context);
-            const results = await dialogContext.continueDialog();
-
-            console.log(`[${userId}] Estado del diálogo: ${results.status}`);
             
+            // Primero intentar continuar cualquier diálogo existente
+            const results = await dialogContext.continueDialog();
+            console.log(`[${userId}] Estado del diálogo: ${results.status}`);
+
+            // Si no hay diálogo activo, iniciar uno nuevo
             if (results.status === DialogTurnStatus.empty) {
+                // Para eventos invoke de OAuth, permitir siempre el procesamiento
+                if (activityType === 'invoke' && 
+                    ['signin/verifyState', 'signin/tokenExchange'].includes(activityName)) {
+                    console.log(`[${userId}] Procesando evento OAuth invoke sin verificar activeDialogs`);
+                    return;
+                }
+                
+                // Verificar si ya hay un diálogo activo para evitar duplicados
+                const dialogKey = `dialog-${userId}`;
+                if (this.activeDialogs.has(dialogKey)) {
+                    console.log(`[${userId}] Diálogo ya marcado como activo, verificando estado...`);
+                    
+                    // Si es un comando login explícito, limpiar y reiniciar
+                    if (activityType === 'message' && context.activity.text?.toLowerCase() === 'login') {
+                        console.log(`[${userId}] Comando login detectado, limpiando estado anterior`);
+                        this.activeDialogs.delete(dialogKey);
+                        await dialogContext.cancelAllDialogs();
+                    } else {
+                        return;
+                    }
+                }
+                
                 this.activeDialogs.add(dialogKey);
-                console.log(`[${userId}] Iniciando nuevo diálogo`);
+                console.log(`[${userId}] Iniciando nuevo diálogo OAuth`);
                 await dialogContext.beginDialog(this.id);
+            } else if (results.status === DialogTurnStatus.complete) {
+                // Limpiar el diálogo activo cuando se complete
+                const dialogKey = `dialog-${userId}`;
+                this.activeDialogs.delete(dialogKey);
+                console.log(`[${userId}] Diálogo completado, limpiando estado`);
             }
 
         } catch (error) {
@@ -127,6 +156,7 @@ class MainDialog extends LogoutDialog {
 
         try {
             console.log(`[${userId}] Mostrando OAuth prompt`);
+            console.log(`[${userId}] connectionName: ${process.env.connectionName || process.env.OAUTH_CONNECTION_NAME}`);
             
             // FORZAR LIMPIEZA DE TOKEN ANTES DE MOSTRAR PROMPT
             await this.forceTokenCleanup(stepContext.context, userId);
@@ -136,11 +166,15 @@ class MainDialog extends LogoutDialog {
                 'Inicia sesión con tu cuenta corporativa para continuar.'
             );
             
-            return await stepContext.beginDialog(OAUTH_PROMPT);
+            console.log(`[${userId}] Iniciando diálogo OAuth: ${OAUTH_PROMPT}`);
+            const result = await stepContext.beginDialog(OAUTH_PROMPT);
+            console.log(`[${userId}] Resultado beginDialog:`, result);
+            return result;
             
         } catch (error) {
             console.error(`[${userId}] Error en promptStep:`, error);
-            await stepContext.context.sendActivity('❌ Error iniciando autenticación.');
+            console.error(`[${userId}] Stack trace:`, error.stack);
+            await stepContext.context.sendActivity('❌ Error iniciando autenticación. Verifica la configuración OAuth.');
             return await stepContext.endDialog();
         }
     }
@@ -156,6 +190,32 @@ class MainDialog extends LogoutDialog {
         const activityName = stepContext.context.activity.name;
 
         console.log(`[${userId}] LoginStep - Token: ${!!tokenResponse?.token}, Activity: ${activityType}:${activityName || 'N/A'}`);
+        
+        // Para eventos invoke, intentar obtener el token del contexto si no está en result
+        if (!tokenResponse && activityType === 'invoke' && 
+            ['signin/verifyState', 'signin/tokenExchange'].includes(activityName)) {
+            console.log(`[${userId}] Es invoke OAuth, intentando obtener token del contexto`);
+            
+            try {
+                const adapter = stepContext.context.adapter;
+                const connectionName = process.env.connectionName || process.env.OAUTH_CONNECTION_NAME;
+                
+                if (adapter.getUserToken) {
+                    const tokenFromAdapter = await adapter.getUserToken(
+                        stepContext.context,
+                        connectionName
+                    );
+                    
+                    if (tokenFromAdapter && tokenFromAdapter.token) {
+                        console.log(`[${userId}] Token obtenido del adapter después de invoke`);
+                        stepContext.result = tokenFromAdapter;
+                        return await this.loginStep(stepContext); // Reintentar con el token
+                    }
+                }
+            } catch (error) {
+                console.error(`[${userId}] Error obteniendo token después de invoke:`, error);
+            }
+        }
         
         if (tokenResponse && tokenResponse.token) {
             try {
